@@ -1,7 +1,7 @@
 ******************************************************************************
              TMS320C2000 Linker PC v22.6.1                     
 ******************************************************************************
->> Linked Thu Apr 16 16:02:12 2026
+>> Linked Thu Apr 16 17:53:49 2026
 
 OUTPUT FILE NAME:   <Electronic_Differantial_v_1_0_1.out>
 ENTRY POINT SYMBOL: "_c_int00"  address: 0008469f
@@ -799,7 +799,7 @@ MODULE SUMMARY
 
 LINKER GENERATED MEMRANGE CRC TABLES
 
-_ccs_flash_checksum @ 00000000 records: 16, size/record: 6, table size: 102, algorithm=C28_CHECKSUM_16(ID=13), CRC: 000068aa
+_ccs_flash_checksum @ 00000000 records: 16, size/record: 6, table size: 102, algorithm=C28_CHECKSUM_16(ID=13), CRC: 000068ae
 	BEGIN: page=0, load addr=00080000, size=00000002
 	FLASHA: page=0, load addr=00080002, size=00001ffe
 	FLASHB: page=0, load addr=00082000, size=00002000

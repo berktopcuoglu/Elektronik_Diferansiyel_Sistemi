@@ -3,7 +3,7 @@
  * F28379D LaunchPad + 2x DRV8301 + 2x PMSM
  *
  * Mimari:
- *  - Üst seviye: Elektronik diferansiyel (Ackermann tabanlý hýz daðýtýmý)
+ *  - Üst seviye: Elektronik diferansiyel (Ackermann tabanlý hiz dagitimi)
  *  - Alt seviye: Her motor için hýz çevrimi + FOC akým çevrimi + SVPWM
  *
  * Motor-1 pin eþleþmeleri (önceden doðrulandý):

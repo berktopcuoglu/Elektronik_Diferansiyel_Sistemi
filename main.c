@@ -1,5 +1,5 @@
+
 #include "F28x_Project.h"
-// Motor-2 sürümü: ePWM4/5/6, SPIB, eQEP2, ikinci sürücü pinleri
 #include <math.h>
 #include <stdint.h>
 
@@ -26,31 +26,29 @@
 #define TWO_PI_F                   6.28318530717958647692f
 #define INV_SQRT3_F                0.5773502691896258f
 #define SQRT3_BY_2_F               0.8660254037844386f
+#define SQRT3_F                    1.7320508075688772f
 
 // ===================== Motor / Inverter =====================
-#define MOTOR_POLE_PAIRS           4.0f
-#define MOTOR_RS_PHASE_OHM         0.36f
-#define MOTOR_LS_PHASE_H           0.00020f
-#define PM_FLUX_WB                 0.0064f
+#define MOTOR_POLE_PAIRS              4.0f
+#define MOTOR_RS_PHASE_OHM            0.36f
+#define MOTOR_LS_PHASE_H              0.00020f
+#define PM_FLUX_WB                    0.0064f
 
-#define CURRENT_SHUNT_OHM          0.01f
-#define IA_SIGN                    (1.0f)
-#define IB_SIGN                    (1.0f)
+#define CURRENT_SHUNT_OHM             0.01f
+#define IA_SIGN                       (1.0f)
+#define IB_SIGN                       (1.0f)
 
 // ===================== Ölçüm / Koruma =====================
-#define VBUS_NEAR_CLIP_RAW         4000U
-#define VBUS_SAT_RAW               4088U
-#define VBUS_CAL_MEASURED_V        24.0f
-#define CURR_OFFSET_SAMPLES        2048U
+#define VBUS_NEAR_CLIP_RAW            4000U
+#define VBUS_SAT_RAW                  4088U
+#define VBUS_CAL_MEASURED_V           24.0f
+#define CURR_OFFSET_SAMPLES           2048U
 
-#define I_FILT_ALPHA               0.05f
-#define VBUS_FILT_ALPHA            0.05f
+#define I_FILT_ALPHA                  0.05f
+#define VBUS_FILT_ALPHA               0.05f
 
-#define FOC_OC_LIMIT_A             7.1f
-
-// Not: Bu projede hýz tahmini 1 kHz zaman tabanýnda yapýlmaktadýr.
-// Elektriksel açý ise FOC tarafýnda 20 kHz ADC ISR içinde güncellenmelidir.
-#define FOC_MIN_RUN_VBUS_V          5.0f
+#define FOC_OC_LIMIT_A                7.1f
+#define FOC_MIN_RUN_VBUS_V            5.0f
 
 // ===================== Kontrol =====================
 #define DRV8301_CSA_GAIN_DEFAULT_VV   20.0f
@@ -72,12 +70,12 @@
 #define SPEED_PI_OUT_MAX_A            0.80f
 
 #define SPEED_FILT_ALPHA              0.20f
-#define TRACTION_SPEED_ENTER_BAND_RPM  15.0f
-#define TRACTION_SPEED_EXIT_BAND_RPM    5.0f
-#define TRACTION_MIN_RUN_IQ_A           0.18f
-#define VERIFY_TIME_MS                  0U
-#define VERIFY_IQ_A                     0.25f
-#define ALIGN_OFFSET_SAMPLE_MS        200U
+#define TRACTION_SPEED_ENTER_BAND_RPM 15.0f
+#define TRACTION_SPEED_EXIT_BAND_RPM   5.0f
+#define TRACTION_MIN_RUN_IQ_A          0.18f
+#define VERIFY_TIME_MS                 0U
+#define VERIFY_IQ_A                    0.25f
+#define ALIGN_OFFSET_SAMPLE_MS         200U
 
 #define FOC_VOLT_LIMIT_FACTOR         0.95f
 #define DUTY_MIN                      0.02f
@@ -86,36 +84,55 @@
 
 #define USE_DECOUPLING_FF             0
 
-// ===================== Enkoder / eQEP2 =====================
-#define ENCODER_LINES_PER_REV         1000U
-#define ENCODER_COUNTS_PER_REV        (4U * ENCODER_LINES_PER_REV)
-#define ENCODER_USE_EQEP2_INDEX       1U
-#define ENCODER_SWAP_AB               0U
-#define ENCODER_MECH_SIGN             (1.0f)
-#define ENCODER_OFFSET_EXTRA_RAD      0.0f
+// ===================== ADC trigger seçimi =====================
+// Tüm motor akým/Vbus örneklemeleri ayný anda, ePWM1 SOCA ile tetiklenir.
+#define ADC_TRIGSEL_EPWM1_SOCA        5U
 
-// ===================== Pinler =====================
-#define PIN_DRV_FAULT              139U
-#define PIN_DRV_OCTW               56U
-#define PIN_DRV_SPI_SIMO           63U
-#define PIN_DRV_SPI_SOMI           64U
-#define PIN_DRV_SPI_CLK            65U
-#define PIN_DRV_SPI_CS             66U
-#define PIN_DRV_EN_GATE            26U
-#define PIN_DRV_DC_CAL             27U
+// Motor-1 ADC kanal/soc eþleþmeleri
+#define M1_ADCC_SOC_IA                0U
+#define M1_ADCB_SOC_IB                0U
+#define M1_ADCA_SOC_VBUS              1U
+#define M1_ADCC_CH_IA                 2U      // ADCINC2
+#define M1_ADCB_CH_IB                 2U      // ADCINB2
+#define M1_ADCA_CH_VBUS               14U     // ADCIN14
+
+// Motor-2 ADC kanal/soc eþleþmeleri
+#define M2_ADCC_SOC_IA                1U
+#define M2_ADCB_SOC_IB                1U
+#define M2_ADCA_SOC_VBUS              2U
+#define M2_ADCC_CH_IA                 4U      // ADCINC4
+#define M2_ADCB_CH_IB                 4U      // ADCINB4
+#define M2_ADCA_CH_VBUS               15U     // ADCIN15
+
+
+// ===================== Elektronik Diferansiyel / Ackermann =====================
+// Varsayým:
+//   Motor-1 = arka sol teker
+//   Motor-2 = arka sað teker
+//   + direksiyon açýsý = sola dönüþ
+//   + taþýt hýzý = ileri yönde çizgisel hýz
+#define ED_ENABLE_DEFAULT               1U
+#define ED_MOTOR1_IS_REAR_LEFT          1U
+#define ED_WHEELBASE_M                  0.60f
+#define ED_TRACK_WIDTH_M                0.40f
+#define ED_WHEEL_RADIUS_M               0.10f
+#define ED_GEAR_RATIO                   5.0f
+#define ED_VEHICLE_MAX_SPEED_MPS        8.0f
+#define ED_STEER_LIMIT_DEG              35.0f
+#define ED_MOTOR_RPM_LIMIT              5000.0f
 
 // ===================== DRV8301 =====================
-#define DRV8301_REG_STATUS1        0x0U
-#define DRV8301_REG_STATUS2        0x1U
-#define DRV8301_REG_CONTROL1       0x2U
-#define DRV8301_REG_CONTROL2       0x3U
+#define DRV8301_REG_STATUS1           0x0U
+#define DRV8301_REG_STATUS2           0x1U
+#define DRV8301_REG_CONTROL1          0x2U
+#define DRV8301_REG_CONTROL2          0x3U
 
-#define DRV8301_CTRL2_OCTW_BOTH    (0x0000U)
-#define DRV8301_CTRL2_GAIN_10VV    (0x0000U)
-#define DRV8301_CTRL2_GAIN_20VV    (0x0004U)
-#define DRV8301_CTRL2_GAIN_40VV    (0x0008U)
-#define DRV8301_CTRL2_GAIN_80VV    (0x000CU)
-#define DRV8301_DEFAULT_GAIN_BITS  DRV8301_CTRL2_GAIN_20VV
+#define DRV8301_CTRL2_OCTW_BOTH       (0x0000U)
+#define DRV8301_CTRL2_GAIN_10VV       (0x0000U)
+#define DRV8301_CTRL2_GAIN_20VV       (0x0004U)
+#define DRV8301_CTRL2_GAIN_40VV       (0x0008U)
+#define DRV8301_CTRL2_GAIN_80VV       (0x000CU)
+#define DRV8301_DEFAULT_GAIN_BITS     DRV8301_CTRL2_GAIN_20VV
 
 typedef enum
 {
@@ -125,6 +142,12 @@ typedef enum
     APP_STATE_CLOSEDLOOP,
     APP_STATE_FAULT
 } AppState_e;
+
+typedef enum
+{
+    SPI_MODULE_A = 0,
+    SPI_MODULE_B = 1
+} SpiModule_e;
 
 typedef struct
 {
@@ -137,240 +160,271 @@ typedef struct
 
 typedef struct
 {
-    float CsaGain_VV;
-    Uint16 PwmEnabled;
-    Uint16 AppState;
-    Uint16 StartCmd;
-    int16_t DirectionCmd;
+    float vCmd_mps;
+    float deltaDeg;
+    float deltaRad;
+    float absDeltaRad;
+    float absV_mps;
+    float speedSign;
+    float turnRadius_m;
+    float vInner_mps;
+    float vOuter_mps;
+    float vLeft_mps;
+    float vRight_mps;
+    float wLeftWheel_rpm;
+    float wRightWheel_rpm;
+    float mLeft_rpm;
+    float mRight_rpm;
+    float m1Ref_rpm;
+    float m2Ref_rpm;
+    float denom;
+} ElectronicDiffDebug_t;
 
+typedef struct
+{
+    SpiModule_e SpiModule;
+    Uint16 PinFault;
+    Uint16 PinOctw;
+    Uint16 PinSpiSimo;
+    Uint16 PinSpiSomi;
+    Uint16 PinSpiClk;
+    Uint16 PinSpiCs;
+    Uint16 PinEnGate;
+    Uint16 PinDcCal;
+
+    Uint16 EqepModule;                 // 1 -> EQEP1, 2 -> EQEP2
+    Uint16 PinEqepA;
+    Uint16 PinEqepB;
+    Uint16 PinEqepI;
+    Uint16 EncoderUseIndex;
+    Uint16 EncoderSwapAB;
+    float  EncoderMechSign;
+    Uint16 EncoderCountsPerRev;
+
+    volatile struct EPWM_REGS *PwmA;
+    volatile struct EPWM_REGS *PwmB;
+    volatile struct EPWM_REGS *PwmC;
+
+    Uint16 PwmGpioBase;                // Motor1: 0, Motor2: 6
+} MotorHw_t;
+
+typedef struct
+{
+    Uint16 IA_raw;
+    Uint16 IB_raw;
+    Uint16 VBS_raw;
+
+    float IA_adc_V;
+    float IB_adc_V;
+    float VBS_adc_V;
+
+    float IA_offset_counts;
+    float IB_offset_counts;
+
+    int32_t IA_corr_counts;
+    int32_t IB_corr_counts;
+    float IA_corr_V;
+    float IB_corr_V;
+
+    float CsaGain_VV;
     float IA_A;
     float IB_A;
     float IC_A;
-    float Vbus_V;
+    float IA_A_filt;
+    float IB_A_filt;
 
-    float IA_A_Filt;
-    float IB_A_Filt;
-    float Vbus_V_Filt;
+    float VBS_bus_V;
+    float VBS_bus_V_filt;
+    float VbusDividerGain;
+    float VbusSatBus_V;
+    Uint16 VbusNearClip;
+    Uint16 VbusSaturated;
+
+    float Ialpha_A;
+    float Ibeta_A;
+    float Id_A;
+    float Iq_A;
+
+    float IdRefCmd_A;
+    float IqRefCmd_A;
+    float IqRefTarget_A;
 
     float SpeedRefRpmCmd;
     float SpeedCmdRpmRamp;
-    float SpeedFbRpm;
-    float SpeedFbRpmFilt;
     float OmegaMechCmdRad_s;
     float OmegaElecCmdRad_s;
-    float OmegaMechFbRad_s;
-    float OmegaElecFbRad_s;
 
     float ThetaCtrlRad;
+    float ThetaOpenloopRad;
     float ThetaMechEncRad;
     float ThetaElecEncRad;
     float ThetaElecOffsetRad;
 
-    float IdRef_A;
-    float IqRefTarget_A;
-    float IqRefCmd_A;
+    float SpeedMechFbRpm;
+    float SpeedMechFbRpmFilt;
+    float OmegaMechFbRad_s;
+    float OmegaElecFbRad_s;
 
-    float Id_A;
-    float Iq_A;
+    int32_t QepCount;
+    int32_t QepPrevCount;
+    int32_t QepDeltaCount;
+    Uint16 QepIndexSeen;
+    float AlignQepCountSum;
+    Uint32 AlignQepSampleCount;
 
     float VdCmd_V;
     float VqCmd_V;
+    float ValphaCmd_V;
+    float VbetaCmd_V;
+    float VdqLimit_V;
+
+    PI_Controller_t IdPI;
+    PI_Controller_t IqPI;
+    PI_Controller_t SpeedPI;
+
+    Uint32 IA_sum;
+    Uint32 IB_sum;
+    Uint16 CalCount;
+    Uint16 CalActive;
+    Uint16 CalDone;
+
+    Uint16 DcCalPinState;
+    Uint16 GateEnableState;
+    Uint16 FaultState;
+    Uint16 OctwState;
+    Uint16 FaultActive;
+    Uint16 OctwActive;
+
+    Uint16 DrvStat1Raw;
+    Uint16 DrvStat2Raw;
+    Uint16 DrvCtrl1Raw;
+    Uint16 DrvCtrl2Raw;
+    Uint16 DrvStat1Data;
+    Uint16 DrvStat2Data;
+    Uint16 DrvCtrl1Data;
+    Uint16 DrvCtrl2Data;
+    Uint16 DrvFrameFault;
+    Uint16 DrvDeviceID;
+    Uint16 DrvLastRxWord;
+
+    AppState_e AppState;
+    Uint32 AlignCounterMs;
+    Uint32 VerifyCounterMs;
+    Uint32 Timer0IsrCount;
+    Uint32 AdcIsrCount;
 
     float DutyA;
     float DutyB;
     float DutyC;
 
-    Uint16 FaultActive;
-    Uint16 OctwActive;
-    Uint16 QepIndexSeen;
-    int32_t QepCount;
-    int32_t QepDeltaCount;
-    Uint32 AlignCounterMs;
-    Uint32 Timer0IsrCount;
-    Uint32 AdcIsrCount;
+    Uint16 PwmEnabled;
+    Uint16 OverCurrentTrip;
 
-    Uint32 seq;
-} DebugSnapshot_t;
+    Uint16 StartCmd;
+    Uint16 StartCmdPrev;
+    int16_t DirectionCmd;
+
+    Uint16 SpiServiceReq;
+    Uint16 FilterInitDone;
+    Uint16 TractionDriveEnable;
+} MotorCtrl_t;
 
 // ===================== Global =====================
-volatile Uint16 gIA_raw = 0U;
-volatile Uint16 gIB_raw = 0U;
-volatile Uint16 gVBS_raw = 0U;
+static const MotorHw_t gM1Hw =
+{
+    SPI_MODULE_A,
+    19U, 18U, 58U, 59U, 60U, 61U, 124U, 125U,
+    1U, 20U, 21U, 99U, 1U, 0U, 1.0f, 4000U,
+    &EPwm1Regs, &EPwm2Regs, &EPwm3Regs,
+    0U
+};
 
-volatile float gIA_adc_V = 0.0f;
-volatile float gIB_adc_V = 0.0f;
-volatile float gVBS_adc_V = 0.0f;
+static const MotorHw_t gM2Hw =
+{
+    SPI_MODULE_B,
+    139U, 56U, 63U, 64U, 65U, 66U, 26U, 27U,
+    2U, 54U, 55U, 57U, 1U, 0U, 1.0f, 4000U,
+    &EPwm4Regs, &EPwm5Regs, &EPwm6Regs,
+    6U
+};
 
-volatile float gIA_offset_counts = 2048.0f;
-volatile float gIB_offset_counts = 2048.0f;
+volatile MotorCtrl_t gM1 = {0};
+volatile MotorCtrl_t gM2 = {0};
 
-volatile int32_t gIA_corr_counts = 0;
-volatile int32_t gIB_corr_counts = 0;
-volatile float gIA_corr_V = 0.0f;
-volatile float gIB_corr_V = 0.0f;
-
-volatile float gCsaGain_VV = DRV8301_CSA_GAIN_DEFAULT_VV;
-volatile float gIA_A = 0.0f;
-volatile float gIB_A = 0.0f;
-volatile float gIC_A = 0.0f;
-volatile float gIA_A_filt = 0.0f;
-volatile float gIB_A_filt = 0.0f;
-
-volatile float gVBS_bus_V = 0.0f;
-volatile float gVBS_bus_V_filt = 0.0f;
-volatile float gVbusDividerGain = 1.0f;
-volatile float gVbusSatBus_V = 0.0f;
-volatile Uint16 gVbusNearClip = 0U;
-volatile Uint16 gVbusSaturated = 0U;
-
-volatile float gIalpha_A = 0.0f;
-volatile float gIbeta_A = 0.0f;
-volatile float gId_A = 0.0f;
-volatile float gIq_A = 0.0f;
-
-volatile float gIdRefCmd_A = OPENLOOP_ID_A;
-volatile float gIqRefCmd_A = 0.0f;
-volatile float gIqRefTarget_A = 0.0f;
-
-volatile float gSpeedRefRpmCmd = 50.0f;
-volatile float gSpeedCmdRpmRamp = 0.0f;
-volatile float gOmegaMechCmdRad_s = 0.0f;
-volatile float gOmegaElecCmdRad_s = 0.0f;
-
-volatile float gThetaCtrlRad = 0.0f;
-volatile float gThetaOpenloopRad = 0.0f;
-volatile float gThetaMechEncRad = 0.0f;
-volatile float gThetaElecEncRad = 0.0f;
-volatile float gThetaElecOffsetRad = 0.0f;
-
-volatile float gSpeedMechFbRpm = 0.0f;
-volatile float gSpeedMechFbRpmFilt = 0.0f;
-volatile float gOmegaMechFbRad_s = 0.0f;
-volatile float gOmegaElecFbRad_s = 0.0f;
-
-volatile int32_t gQepCount = 0;
-volatile int32_t gQepPrevCount = 0;
-volatile int32_t gQepDeltaCount = 0;
-volatile int32_t gQepDeltaAcc = 0;
-volatile Uint16 gQepSpeedWindowCount = 0U;
-volatile Uint16 gQepIndexSeen = 0U;
-volatile float gAlignQepCountSum = 0.0f;
-volatile Uint32 gAlignQepSampleCount = 0U;
-
-volatile float gVdCmd_V = 0.0f;
-volatile float gVqCmd_V = 0.0f;
-volatile float gValphaCmd_V = 0.0f;
-volatile float gVbetaCmd_V = 0.0f;
-volatile float gVdqLimit_V = 0.0f;
-
-volatile PI_Controller_t gIdPI = {CURRENT_PI_KP, CURRENT_PI_KI, 0.0f, -100.0f, 100.0f};
-volatile PI_Controller_t gIqPI = {CURRENT_PI_KP, CURRENT_PI_KI, 0.0f, -100.0f, 100.0f};
-volatile PI_Controller_t gSpeedPI = {SPEED_PI_KP, SPEED_PI_KI, 0.0f, -SPEED_PI_OUT_MAX_A, SPEED_PI_OUT_MAX_A};
-
-volatile Uint32 gIA_sum = 0U;
-volatile Uint32 gIB_sum = 0U;
-volatile Uint16 gCalCount = 0U;
-volatile Uint16 gCalActive = 0U;
-volatile Uint16 gCalDone = 0U;
-
-volatile Uint16 gDcCalPinState = 0U;
-volatile Uint16 gGateEnableState = 0U;
-volatile Uint16 gFaultState = 1U;
-volatile Uint16 gOctwState = 1U;
-volatile Uint16 gFaultActive = 0U;
-volatile Uint16 gOctwActive = 0U;
-
-volatile Uint16 gDrvStat1Raw = 0U;
-volatile Uint16 gDrvStat2Raw = 0U;
-volatile Uint16 gDrvCtrl1Raw = 0U;
-volatile Uint16 gDrvCtrl2Raw = 0U;
-volatile Uint16 gDrvStat1Data = 0U;
-volatile Uint16 gDrvStat2Data = 0U;
-volatile Uint16 gDrvCtrl1Data = 0U;
-volatile Uint16 gDrvCtrl2Data = 0U;
-volatile Uint16 gDrvFrameFault = 0U;
-volatile Uint16 gDrvDeviceID = 0U;
-volatile Uint16 gDrvLastRxWord = 0U;
-
-volatile AppState_e gAppState = APP_STATE_STOP;
-volatile Uint32 gAlignCounterMs = 0U;
-volatile Uint32 gVerifyCounterMs = 0U;
-volatile Uint32 gTimer0IsrCount = 0U;
-volatile Uint32 gAdcIsrCount = 0U;
-
-volatile float gDutyA = 0.5f;
-volatile float gDutyB = 0.5f;
-volatile float gDutyC = 0.5f;
-
-volatile Uint16 gPwmEnabled = 0U;
-volatile Uint16 gOverCurrentTrip = 0U;
-
-volatile Uint16 gStartCmd = 0U;
-volatile Uint16 gStartCmdPrev = 0U;
-volatile int16_t gDirectionCmd = 1;
-
-volatile Uint16 gSpiServiceReq = 0U;
-volatile Uint16 gFilterInitDone = 0U;
-volatile Uint16 gTractionDriveEnable = 0U;
-
-volatile DebugSnapshot_t gDbg = {0};
+volatile Uint16 gEdEnable = ED_ENABLE_DEFAULT;
+volatile Uint16 gEdStartCmd = 0U;
+volatile float  gVehicleSpeedCmd_mps = 0.0f;     // signed, + ileri
+volatile float  gSteerAngleCmd_deg   = 0.0f;     // + sola dönüþ
+volatile float  gSteerAngleCmd_rad   = 0.0f;
+volatile float  gEdTurnRadius_m      = 0.0f;
+volatile float  gEdYawRateRef_rad_s  = 0.0f;
+volatile float  gEdRearLeftLinRef_mps  = 0.0f;
+volatile float  gEdRearRightLinRef_mps = 0.0f;
+volatile float  gEdRearLeftWheelRef_rpm  = 0.0f;
+volatile float  gEdRearRightWheelRef_rpm = 0.0f;
+volatile float  gEdRearLeftMotorRef_rpm  = 0.0f;
+volatile float  gEdRearRightMotorRef_rpm = 0.0f;
+volatile float  gEdMotor1Ref_rpm = 0.0f;
+volatile float  gEdMotor2Ref_rpm = 0.0f;
+volatile ElectronicDiffDebug_t gEdDbg = {0};
 
 // ===================== Prototypes =====================
-static void GPIO_InitDrv8301Pins(void);
-static void PWM_InitGpioOutputs_Motor2(void);
-
-static void DRV8301_SetDCCal(Uint16 enable);
-static void DRV8301_SetGateEnable(Uint16 enable);
-static void DRV8301_ReadStatusPins(void);
-
-static void SPIB_InitDrv8301(void);
-static inline void DRV8301_CS_Low(void);
-static inline void DRV8301_CS_High(void);
-static Uint16 SPIB_Transfer16(Uint16 data);
-static Uint16 DRV8301_ReadReg(Uint16 addr);
-static Uint16 DRV8301_WriteReg(Uint16 addr, Uint16 data11);
-static void DRV8301_ReadAllRegs(void);
-static void DRV8301_SetCurrentAmpGain(Uint16 gainBits);
-
-static void ADC_InitModules(void);
-static void ADC_InitSOCs(void);
-
-static void EQEP2_InitGpio(void);
-static void EQEP2_InitModule(void);
-static void EQEP2_ResetEstimator(void);
-static void EQEP2_ResetAlignOffsetAccumulator(void);
-static void EQEP2_RunAlignOffsetAccumulator_1kHz(void);
-static void EQEP2_CaptureElecOffsetFromAlign(void);
-static void EQEP2_UpdatePositionFromCount(void);
-static void EQEP2_UpdateSpeed_1kHz(void);
-
-static void PWM_InitInverter(void);
-static void PWM_InitSingleEPwm(volatile struct EPWM_REGS *p);
-static Uint16 PWM_DeadtimeCounts(float deadtime_ns);
-static void PWM_EnableOutputs(Uint16 enable);
-static void PWM_UpdateDutyABC(float dutyA, float dutyB, float dutyC);
-
-static void CPU_TIMER0_Init1kHz(void);
-
-static void StartCurrentOffsetCalibration(void);
-static void WaitCurrentOffsetCalibrationDone(void);
-static void CalibrateVbusDividerFromKnownBus(float measuredBusV);
-
-static inline void ConvertRawToPhysical(void);
-static inline void UpdateFiltersAndAlarms_ISR(void);
-static inline void UpdateDebugSnapshot(void);
-
 static inline float ClampF(float x, float xmin, float xmax);
 static inline float WrapAngle_0_2pi(float x);
 static inline float PI_Run(volatile PI_Controller_t *p, float ref, float fb, float Ts);
 static inline float RampToTarget(float current, float target, float maxStep);
 
-static void FOC_ResetControllers(void);
-static void SVPWM_Apply(float vAlpha, float vBeta, float vdc);
-static void Align_ApplyVoltageVector(float theta_e_align, float modIndex, float vdc);
-static void FOC_RunCurrentLoop_ISR(void);
-static void App_RunStateMachine_1kHz(void);
-static void App_ForceStop(void);
+static void Motor_InitDefaults(volatile MotorCtrl_t *m);
+static void GPIO_InitDrv8301Pins(const MotorHw_t *hw);
+static void PWM_InitGpioOutputs(const MotorHw_t *hw);
+static void EQEP_InitGpio(const MotorHw_t *hw);
+static void SPI_InitDrv8301(const MotorHw_t *hw);
+
+static void DRV8301_SetDCCal(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 enable);
+static void DRV8301_SetGateEnable(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 enable);
+static void DRV8301_ReadStatusPins(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+static inline void DRV8301_CS_Low(const MotorHw_t *hw);
+static inline void DRV8301_CS_High(const MotorHw_t *hw);
+static Uint16 SPI_Transfer16(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 data);
+static Uint16 DRV8301_ReadReg(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 addr);
+static Uint16 DRV8301_WriteReg(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 addr, Uint16 data11);
+static void DRV8301_ReadAllRegs(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+static void DRV8301_SetCurrentAmpGain(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 gainBits);
+
+static void ADC_InitModules(void);
+static void ADC_InitSOCs(void);
+
+static void EQEP_InitModule(const MotorHw_t *hw);
+static void EQEP_ResetEstimator(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+static void EQEP_ResetAlignOffsetAccumulator(volatile MotorCtrl_t *m);
+static void EQEP_RunAlignOffsetAccumulator_1kHz(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+static void EQEP_CaptureElecOffsetFromAlign(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+static void EQEP_UpdatePositionFromCount(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+static void EQEP_UpdateSpeed_1kHz(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+
+static void PWM_InitInverters(void);
+static void PWM_InitSingleEPwm(volatile struct EPWM_REGS *p);
+static Uint16 PWM_DeadtimeCounts(float deadtime_ns);
+static void PWM_EnableOutputs(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 enable);
+static void PWM_UpdateDutyABC(volatile MotorCtrl_t *m, const MotorHw_t *hw, float dutyA, float dutyB, float dutyC);
+
+static void CPU_TIMER0_Init1kHz(void);
+
+static void StartCurrentOffsetCalibrationAll(void);
+static void WaitCurrentOffsetCalibrationDoneAll(void);
+static void CalibrateVbusDividersAll(float measuredBusV);
+
+static inline void ConvertRawToPhysical(volatile MotorCtrl_t *m);
+static inline void UpdateFiltersAndAlarms_ISR(volatile MotorCtrl_t *m);
+
+static void FOC_ResetControllers(volatile MotorCtrl_t *m);
+static void SVPWM_Apply(volatile MotorCtrl_t *m, const MotorHw_t *hw, float vAlpha, float vBeta, float vdc);
+static void Align_ApplyVoltageVector(volatile MotorCtrl_t *m, const MotorHw_t *hw, float theta_e_align, float modIndex, float vdc);
+static void FOC_RunCurrentLoop_ISR(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+static void App_RunStateMachine_1kHz(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+static void App_ForceStop(volatile MotorCtrl_t *m, const MotorHw_t *hw);
+
+static void ElectronicDiff_UpdateRefs_1kHz(void);
 
 interrupt void adca1_isr(void);
 interrupt void cpu_timer0_isr(void);
@@ -380,6 +434,9 @@ void main(void)
 {
     InitSysCtrl();
     InitGpio();
+
+    Motor_InitDefaults(&gM1);
+    Motor_InitDefaults(&gM2);
 
     DINT;
     InitPieCtrl();
@@ -394,13 +451,22 @@ void main(void)
     PieVectTable.TIMER0_INT = &cpu_timer0_isr;
     EDIS;
 
-    GPIO_InitDrv8301Pins();
-    PWM_InitGpioOutputs_Motor2();
-    EQEP2_InitGpio();
-    SPIB_InitDrv8301();
+    GPIO_InitDrv8301Pins(&gM1Hw);
+    GPIO_InitDrv8301Pins(&gM2Hw);
 
-    DRV8301_SetGateEnable(0U);
-    DRV8301_SetDCCal(0U);
+    PWM_InitGpioOutputs(&gM1Hw);
+    PWM_InitGpioOutputs(&gM2Hw);
+
+    EQEP_InitGpio(&gM1Hw);
+    EQEP_InitGpio(&gM2Hw);
+
+    SPI_InitDrv8301(&gM1Hw);
+    SPI_InitDrv8301(&gM2Hw);
+
+    DRV8301_SetGateEnable(&gM1, &gM1Hw, 0U);
+    DRV8301_SetGateEnable(&gM2, &gM2Hw, 0U);
+    DRV8301_SetDCCal(&gM1, &gM1Hw, 0U);
+    DRV8301_SetDCCal(&gM2, &gM2Hw, 0U);
 
     EALLOW;
     CpuSysRegs.PCLKCR0.bit.TBCLKSYNC = 0U;
@@ -408,8 +474,9 @@ void main(void)
 
     ADC_InitModules();
     ADC_InitSOCs();
-    EQEP2_InitModule();
-    PWM_InitInverter();
+    EQEP_InitModule(&gM1Hw);
+    EQEP_InitModule(&gM2Hw);
+    PWM_InitInverters();
     CPU_TIMER0_Init1kHz();
 
     PieCtrlRegs.PIEIER1.bit.INTx1 = 1U;   // ADCA1
@@ -423,29 +490,48 @@ void main(void)
     CpuSysRegs.PCLKCR0.bit.TBCLKSYNC = 1U;
     EDIS;
 
-    DRV8301_SetGateEnable(1U);
+    DRV8301_SetGateEnable(&gM1, &gM1Hw, 1U);
+    DRV8301_SetGateEnable(&gM2, &gM2Hw, 1U);
     DELAY_US(5000);
 
-    DRV8301_ReadStatusPins();
-    DRV8301_ReadAllRegs();
-    DRV8301_SetCurrentAmpGain(DRV8301_DEFAULT_GAIN_BITS);
+    DRV8301_ReadStatusPins(&gM1, &gM1Hw);
+    DRV8301_ReadStatusPins(&gM2, &gM2Hw);
 
-    StartCurrentOffsetCalibration();
-    WaitCurrentOffsetCalibrationDone();
-    CalibrateVbusDividerFromKnownBus(VBUS_CAL_MEASURED_V);
+    DRV8301_ReadAllRegs(&gM1, &gM1Hw);
+    DRV8301_ReadAllRegs(&gM2, &gM2Hw);
 
-    EQEP2_ResetEstimator();
-    EQEP2_UpdatePositionFromCount();
-    App_ForceStop();
-    PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
-    PWM_EnableOutputs(0U);
+    DRV8301_SetCurrentAmpGain(&gM1, &gM1Hw, DRV8301_DEFAULT_GAIN_BITS);
+    DRV8301_SetCurrentAmpGain(&gM2, &gM2Hw, DRV8301_DEFAULT_GAIN_BITS);
+
+    StartCurrentOffsetCalibrationAll();
+    WaitCurrentOffsetCalibrationDoneAll();
+    CalibrateVbusDividersAll(VBUS_CAL_MEASURED_V);
+
+    EQEP_ResetEstimator(&gM1, &gM1Hw);
+    EQEP_ResetEstimator(&gM2, &gM2Hw);
+    EQEP_UpdatePositionFromCount(&gM1, &gM1Hw);
+    EQEP_UpdatePositionFromCount(&gM2, &gM2Hw);
+
+    App_ForceStop(&gM1, &gM1Hw);
+    App_ForceStop(&gM2, &gM2Hw);
+
+    PWM_UpdateDutyABC(&gM1, &gM1Hw, 0.5f, 0.5f, 0.5f);
+    PWM_UpdateDutyABC(&gM2, &gM2Hw, 0.5f, 0.5f, 0.5f);
+    PWM_EnableOutputs(&gM1, &gM1Hw, 0U);
+    PWM_EnableOutputs(&gM2, &gM2Hw, 0U);
 
     for(;;)
     {
-        if(gSpiServiceReq)
+        if(gM1.SpiServiceReq)
         {
-            gSpiServiceReq = 0U;
-            DRV8301_ReadAllRegs();
+            gM1.SpiServiceReq = 0U;
+            DRV8301_ReadAllRegs(&gM1, &gM1Hw);
+        }
+
+        if(gM2.SpiServiceReq)
+        {
+            gM2.SpiServiceReq = 0U;
+            DRV8301_ReadAllRegs(&gM2, &gM2Hw);
         }
     }
 }
@@ -497,47 +583,190 @@ static inline float RampToTarget(float current, float target, float maxStep)
     return target;
 }
 
-// ===================== Init =====================
-static void GPIO_InitDrv8301Pins(void)
+static void Motor_InitDefaults(volatile MotorCtrl_t *m)
 {
-    EALLOW;
+    m->IA_offset_counts = 2048.0f;
+    m->IB_offset_counts = 2048.0f;
+    m->CsaGain_VV = DRV8301_CSA_GAIN_DEFAULT_VV;
+    m->VbusDividerGain = 1.0f;
 
-    GPIO_SetupPinMux(PIN_DRV_FAULT, GPIO_MUX_CPU1, 0);
-    GPIO_SetupPinOptions(PIN_DRV_FAULT, GPIO_INPUT, GPIO_PULLUP);
+    m->IdRefCmd_A = OPENLOOP_ID_A;
+    m->IqRefCmd_A = 0.0f;
+    m->IqRefTarget_A = 0.0f;
 
-    GPIO_SetupPinMux(PIN_DRV_OCTW, GPIO_MUX_CPU1, 0);
-    GPIO_SetupPinOptions(PIN_DRV_OCTW, GPIO_INPUT, GPIO_PULLUP);
+    m->SpeedRefRpmCmd = 50.0f;
+    m->SpeedCmdRpmRamp = 0.0f;
 
-    GPIO_SetupPinMux(PIN_DRV_EN_GATE, GPIO_MUX_CPU1, 0);
-    GPIO_SetupPinOptions(PIN_DRV_EN_GATE, GPIO_OUTPUT, GPIO_PUSHPULL);
+    m->DirectionCmd = 1;
+    m->AppState = APP_STATE_STOP;
 
-    GPIO_SetupPinMux(PIN_DRV_DC_CAL, GPIO_MUX_CPU1, 0);
-    GPIO_SetupPinOptions(PIN_DRV_DC_CAL, GPIO_OUTPUT, GPIO_PUSHPULL);
+    m->DutyA = 0.5f;
+    m->DutyB = 0.5f;
+    m->DutyC = 0.5f;
 
-    GPIO_SetupPinMux(PIN_DRV_SPI_CS, GPIO_MUX_CPU1, 0);
-    GPIO_SetupPinOptions(PIN_DRV_SPI_CS, GPIO_OUTPUT, GPIO_PUSHPULL);
+    m->IdPI.Kp = CURRENT_PI_KP;
+    m->IdPI.Ki = CURRENT_PI_KI;
+    m->IdPI.Ui = 0.0f;
+    m->IdPI.OutMin = -100.0f;
+    m->IdPI.OutMax =  100.0f;
 
-    EDIS;
-    DRV8301_CS_High();
+    m->IqPI.Kp = CURRENT_PI_KP;
+    m->IqPI.Ki = CURRENT_PI_KI;
+    m->IqPI.Ui = 0.0f;
+    m->IqPI.OutMin = -100.0f;
+    m->IqPI.OutMax =  100.0f;
+
+    m->SpeedPI.Kp = SPEED_PI_KP;
+    m->SpeedPI.Ki = SPEED_PI_KI;
+    m->SpeedPI.Ui = 0.0f;
+    m->SpeedPI.OutMin = -SPEED_PI_OUT_MAX_A;
+    m->SpeedPI.OutMax =  SPEED_PI_OUT_MAX_A;
 }
 
-static void PWM_InitGpioOutputs_Motor2(void)
+// ===================== Init =====================
+static void GPIO_InitDrv8301Pins(const MotorHw_t *hw)
 {
     EALLOW;
-    GpioCtrlRegs.GPAPUD.bit.GPIO6 = 1;
-    GpioCtrlRegs.GPAPUD.bit.GPIO7 = 1;
-    GpioCtrlRegs.GPAPUD.bit.GPIO8 = 1;
-    GpioCtrlRegs.GPAPUD.bit.GPIO9 = 1;
-    GpioCtrlRegs.GPAPUD.bit.GPIO10 = 1;
-    GpioCtrlRegs.GPAPUD.bit.GPIO11 = 1;
+    GPIO_SetupPinMux(hw->PinFault, GPIO_MUX_CPU1, 0);
+    GPIO_SetupPinOptions(hw->PinFault, GPIO_INPUT, GPIO_PULLUP);
 
-    GpioCtrlRegs.GPAMUX1.bit.GPIO6 = 1;   // EPWM4A
-    GpioCtrlRegs.GPAMUX1.bit.GPIO7 = 1;   // EPWM4B
-    GpioCtrlRegs.GPAMUX1.bit.GPIO8 = 1;   // EPWM5A
-    GpioCtrlRegs.GPAMUX1.bit.GPIO9 = 1;   // EPWM5B
-    GpioCtrlRegs.GPAMUX1.bit.GPIO10 = 1;  // EPWM6A
-    GpioCtrlRegs.GPAMUX1.bit.GPIO11 = 1;  // EPWM6B
+    GPIO_SetupPinMux(hw->PinOctw, GPIO_MUX_CPU1, 0);
+    GPIO_SetupPinOptions(hw->PinOctw, GPIO_INPUT, GPIO_PULLUP);
+
+    GPIO_SetupPinMux(hw->PinEnGate, GPIO_MUX_CPU1, 0);
+    GPIO_SetupPinOptions(hw->PinEnGate, GPIO_OUTPUT, GPIO_PUSHPULL);
+
+    GPIO_SetupPinMux(hw->PinDcCal, GPIO_MUX_CPU1, 0);
+    GPIO_SetupPinOptions(hw->PinDcCal, GPIO_OUTPUT, GPIO_PUSHPULL);
+
+    GPIO_SetupPinMux(hw->PinSpiCs, GPIO_MUX_CPU1, 0);
+    GPIO_SetupPinOptions(hw->PinSpiCs, GPIO_OUTPUT, GPIO_PUSHPULL);
     EDIS;
+
+    GPIO_WritePin(hw->PinSpiCs, 1U);
+}
+
+static void PWM_InitGpioOutputs(const MotorHw_t *hw)
+{
+    Uint16 base = hw->PwmGpioBase;
+    EALLOW;
+    GpioCtrlRegs.GPAPUD.all |= ((Uint32)0x3FU << base);
+
+    GpioCtrlRegs.GPAMUX1.all &= ~((Uint32)0xFFFU << (base * 2U));
+    GpioCtrlRegs.GPAMUX1.all |=  ((Uint32)0x555U << (base * 2U));
+    EDIS;
+}
+
+static void EQEP_InitGpio(const MotorHw_t *hw)
+{
+    if(hw->EqepModule == 1U)
+    {
+        GPIO_SetupPinMux(hw->PinEqepA, GPIO_MUX_CPU1, 1U);
+        GPIO_SetupPinOptions(hw->PinEqepA, GPIO_INPUT, GPIO_PULLUP);
+
+        GPIO_SetupPinMux(hw->PinEqepB, GPIO_MUX_CPU1, 1U);
+        GPIO_SetupPinOptions(hw->PinEqepB, GPIO_INPUT, GPIO_PULLUP);
+
+        if(hw->EncoderUseIndex)
+        {
+            GPIO_SetupPinMux(hw->PinEqepI, GPIO_MUX_CPU1, 2U);
+            GPIO_SetupPinOptions(hw->PinEqepI, GPIO_INPUT, GPIO_PULLUP);
+        }
+    }
+    else
+    {
+        GPIO_SetupPinMux(hw->PinEqepA, GPIO_MUX_CPU1, 5U);
+        GPIO_SetupPinOptions(hw->PinEqepA, GPIO_INPUT, GPIO_PULLUP);
+
+        GPIO_SetupPinMux(hw->PinEqepB, GPIO_MUX_CPU1, 5U);
+        GPIO_SetupPinOptions(hw->PinEqepB, GPIO_INPUT, GPIO_PULLUP);
+
+        if(hw->EncoderUseIndex)
+        {
+            GPIO_SetupPinMux(hw->PinEqepI, GPIO_MUX_CPU1, 5U);
+            GPIO_SetupPinOptions(hw->PinEqepI, GPIO_INPUT, GPIO_PULLUP);
+        }
+    }
+}
+
+static void SPI_InitDrv8301(const MotorHw_t *hw)
+{
+    EALLOW;
+    if(hw->SpiModule == SPI_MODULE_A)
+    {
+        CpuSysRegs.PCLKCR8.bit.SPI_A = 1U;
+
+        GpioCtrlRegs.GPBPUD.bit.GPIO58 = 0;
+        GpioCtrlRegs.GPBQSEL2.bit.GPIO58 = 3;
+        GpioCtrlRegs.GPBGMUX2.bit.GPIO58 = 3;
+        GpioCtrlRegs.GPBMUX2.bit.GPIO58 = 3;
+
+        GpioCtrlRegs.GPBPUD.bit.GPIO59 = 0;
+        GpioCtrlRegs.GPBQSEL2.bit.GPIO59 = 3;
+        GpioCtrlRegs.GPBGMUX2.bit.GPIO59 = 3;
+        GpioCtrlRegs.GPBMUX2.bit.GPIO59 = 3;
+
+        GpioCtrlRegs.GPBPUD.bit.GPIO60 = 0;
+        GpioCtrlRegs.GPBQSEL2.bit.GPIO60 = 3;
+        GpioCtrlRegs.GPBGMUX2.bit.GPIO60 = 3;
+        GpioCtrlRegs.GPBMUX2.bit.GPIO60 = 3;
+
+        EDIS;
+
+        SpiaRegs.SPICCR.bit.SPISWRESET  = 0U;
+        SpiaRegs.SPICCR.bit.SPICHAR     = 15U;
+        SpiaRegs.SPICCR.bit.CLKPOLARITY = 0U;
+        SpiaRegs.SPICCR.bit.SPILBK      = 0U;
+
+        SpiaRegs.SPICTL.bit.MASTER_SLAVE = 1U;
+        SpiaRegs.SPICTL.bit.TALK         = 1U;
+        SpiaRegs.SPICTL.bit.CLK_PHASE    = 0U;
+        SpiaRegs.SPICTL.bit.SPIINTENA    = 0U;
+
+        SpiaRegs.SPIBRR.bit.SPI_BIT_RATE = 49U;
+        SpiaRegs.SPIPRI.bit.FREE = 1U;
+        SpiaRegs.SPIPRI.bit.SOFT = 1U;
+        SpiaRegs.SPICCR.bit.SPISWRESET = 1U;
+    }
+    else
+    {
+        CpuSysRegs.PCLKCR8.bit.SPI_B = 1U;
+
+        GpioCtrlRegs.GPBPUD.bit.GPIO63 = 0;
+        GpioCtrlRegs.GPBQSEL2.bit.GPIO63 = 3;
+        GpioCtrlRegs.GPBGMUX2.bit.GPIO63 = 3;
+        GpioCtrlRegs.GPBMUX2.bit.GPIO63 = 3;
+
+        GpioCtrlRegs.GPCPUD.bit.GPIO64 = 0;
+        GpioCtrlRegs.GPCQSEL1.bit.GPIO64 = 3;
+        GpioCtrlRegs.GPCGMUX1.bit.GPIO64 = 3;
+        GpioCtrlRegs.GPCMUX1.bit.GPIO64 = 3;
+
+        GpioCtrlRegs.GPCPUD.bit.GPIO65 = 0;
+        GpioCtrlRegs.GPCQSEL1.bit.GPIO65 = 3;
+        GpioCtrlRegs.GPCGMUX1.bit.GPIO65 = 3;
+        GpioCtrlRegs.GPCMUX1.bit.GPIO65 = 3;
+
+        GpioCtrlRegs.GPCPUD.bit.GPIO66 = 0;
+        GpioCtrlRegs.GPCQSEL1.bit.GPIO66 = 3;
+
+        EDIS;
+
+        SpibRegs.SPICCR.bit.SPISWRESET  = 0U;
+        SpibRegs.SPICCR.bit.SPICHAR     = 15U;
+        SpibRegs.SPICCR.bit.CLKPOLARITY = 0U;
+        SpibRegs.SPICCR.bit.SPILBK      = 0U;
+
+        SpibRegs.SPICTL.bit.MASTER_SLAVE = 1U;
+        SpibRegs.SPICTL.bit.TALK         = 1U;
+        SpibRegs.SPICTL.bit.CLK_PHASE    = 0U;
+        SpibRegs.SPICTL.bit.SPIINTENA    = 0U;
+
+        SpibRegs.SPIBRR.bit.SPI_BIT_RATE = 49U;
+        SpibRegs.SPIPRI.bit.FREE = 1U;
+        SpibRegs.SPIPRI.bit.SOFT = 1U;
+        SpibRegs.SPICCR.bit.SPISWRESET = 1U;
+    }
 }
 
 static void ADC_InitModules(void)
@@ -568,191 +797,199 @@ static void ADC_InitSOCs(void)
 {
     EALLOW;
 
-    // Motor-2 kanal eþleþmeleri:
-    //   Adcc SOC0 -> phase current A  (ADCINC4)
-    //   Adcb SOC0 -> phase current B  (ADCINB4)
-    //   Adca SOC1 -> DC bus           (ADCIN15)
-    // Trigger kaynaðý: ePWM4 SOCA
-    AdccRegs.ADCSOC0CTL.bit.CHSEL   = 4;
+    // Motor-1
+    AdccRegs.ADCSOC0CTL.bit.CHSEL   = M1_ADCC_CH_IA;
     AdccRegs.ADCSOC0CTL.bit.ACQPS   = ADC_ACQPS_12BIT;
-    AdccRegs.ADCSOC0CTL.bit.TRIGSEL = 11;
+    AdccRegs.ADCSOC0CTL.bit.TRIGSEL = ADC_TRIGSEL_EPWM1_SOCA;
 
-    AdcbRegs.ADCSOC0CTL.bit.CHSEL   = 4;
+    AdcbRegs.ADCSOC0CTL.bit.CHSEL   = M1_ADCB_CH_IB;
     AdcbRegs.ADCSOC0CTL.bit.ACQPS   = ADC_ACQPS_12BIT;
-    AdcbRegs.ADCSOC0CTL.bit.TRIGSEL = 11;
+    AdcbRegs.ADCSOC0CTL.bit.TRIGSEL = ADC_TRIGSEL_EPWM1_SOCA;
 
-    AdcaRegs.ADCSOC1CTL.bit.CHSEL   = 15;
+    AdcaRegs.ADCSOC1CTL.bit.CHSEL   = M1_ADCA_CH_VBUS;
     AdcaRegs.ADCSOC1CTL.bit.ACQPS   = ADC_ACQPS_12BIT;
-    AdcaRegs.ADCSOC1CTL.bit.TRIGSEL = 11;
+    AdcaRegs.ADCSOC1CTL.bit.TRIGSEL = ADC_TRIGSEL_EPWM1_SOCA;
 
-    AdcaRegs.ADCINTSEL1N2.bit.INT1SEL  = 1;
-    AdcaRegs.ADCINTSEL1N2.bit.INT1E    = 1;
-    AdcaRegs.ADCINTSEL1N2.bit.INT1CONT = 0;
+    // Motor-2
+    AdccRegs.ADCSOC1CTL.bit.CHSEL   = M2_ADCC_CH_IA;
+    AdccRegs.ADCSOC1CTL.bit.ACQPS   = ADC_ACQPS_12BIT;
+    AdccRegs.ADCSOC1CTL.bit.TRIGSEL = ADC_TRIGSEL_EPWM1_SOCA;
 
-    AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;
-    AdcaRegs.ADCINTOVFCLR.bit.ADCINT1 = 1;
+    AdcbRegs.ADCSOC1CTL.bit.CHSEL   = M2_ADCB_CH_IB;
+    AdcbRegs.ADCSOC1CTL.bit.ACQPS   = ADC_ACQPS_12BIT;
+    AdcbRegs.ADCSOC1CTL.bit.TRIGSEL = ADC_TRIGSEL_EPWM1_SOCA;
 
+    AdcaRegs.ADCSOC2CTL.bit.CHSEL   = M2_ADCA_CH_VBUS;
+    AdcaRegs.ADCSOC2CTL.bit.ACQPS   = ADC_ACQPS_12BIT;
+    AdcaRegs.ADCSOC2CTL.bit.TRIGSEL = ADC_TRIGSEL_EPWM1_SOCA;
+
+    // ADCA INT1, motor-2 VBUS tamamlandýðýnda oluþur; bu anda tüm sonuçlar hazýrdýr.
+    AdcaRegs.ADCINTSEL1N2.bit.INT1SEL  = 2U;
+    AdcaRegs.ADCINTSEL1N2.bit.INT1E    = 1U;
+    AdcaRegs.ADCINTSEL1N2.bit.INT1CONT = 0U;
+
+    AdcaRegs.ADCINTFLGCLR.bit.ADCINT1  = 1U;
+    AdcaRegs.ADCINTOVFCLR.bit.ADCINT1  = 1U;
     EDIS;
 }
 
-static void EQEP2_InitGpio(void)
+static void EQEP_InitModule(const MotorHw_t *hw)
 {
-    GPIO_SetupPinMux(54U, GPIO_MUX_CPU1, 5U);    // EQEP2A
-    GPIO_SetupPinOptions(54U, GPIO_INPUT, GPIO_PULLUP);
+    volatile struct EQEP_REGS *q;
 
-    GPIO_SetupPinMux(55U, GPIO_MUX_CPU1, 5U);    // EQEP2B
-    GPIO_SetupPinOptions(55U, GPIO_INPUT, GPIO_PULLUP);
-
-#if ENCODER_USE_EQEP2_INDEX
-    GPIO_SetupPinMux(57U, GPIO_MUX_CPU1, 5U);    // EQEP2I
-    GPIO_SetupPinOptions(57U, GPIO_INPUT, GPIO_PULLUP);
-#endif
-}
-
-static void EQEP2_InitModule(void)
-{
     EALLOW;
-    CpuSysRegs.PCLKCR4.bit.EQEP2 = 1U;
-    EDIS;
-
-    EQep2Regs.QDECCTL.all = 0U;
-    EQep2Regs.QEPCTL.all  = 0U;
-    EQep2Regs.QCAPCTL.all = 0U;
-
-    EQep2Regs.QDECCTL.bit.QSRC = 0U;        // Quadrature count mode
-    EQep2Regs.QDECCTL.bit.SWAP = ENCODER_SWAP_AB ? 1U : 0U;
-
-    EQep2Regs.QPOSINIT = 0U;
-    EQep2Regs.QPOSMAX  = (Uint32)(ENCODER_COUNTS_PER_REV - 1U);
-    EQep2Regs.QPOSCNT  = 0U;
-
-    EQep2Regs.QEPCTL.bit.FREE_SOFT = 2U;
-    EQep2Regs.QEPCTL.bit.PCRM      = 1U;    // Reset on max position
-    EQep2Regs.QEPCTL.bit.IEI       = 0U;
-    EQep2Regs.QEPCTL.bit.SWI       = 1U;
-    EQep2Regs.QEPCTL.bit.QPEN      = 1U;
-
-    EQep2Regs.QCLR.all = 0xFFFFU;
-}
-
-static void EQEP2_ResetEstimator(void)
-{
-    gQepCount = (int32_t)EQep2Regs.QPOSCNT;
-    gQepPrevCount = gQepCount;
-    gQepDeltaCount = 0;
-    gQepDeltaAcc = 0;
-    gQepSpeedWindowCount = 0U;
-    gQepIndexSeen = 0U;
-
-    gSpeedMechFbRpm = 0.0f;
-    gSpeedMechFbRpmFilt = 0.0f;
-    gOmegaMechFbRad_s = 0.0f;
-    gOmegaElecFbRad_s = 0.0f;
-
-    EQEP2_UpdatePositionFromCount();
-}
-
-static void EQEP2_ResetAlignOffsetAccumulator(void)
-{
-    gAlignQepCountSum = 0.0f;
-    gAlignQepSampleCount = 0U;
-}
-
-static void EQEP2_RunAlignOffsetAccumulator_1kHz(void)
-{
-    if(gAlignCounterMs >= (ALIGN_TIME_MS - ALIGN_OFFSET_SAMPLE_MS))
+    if(hw->EqepModule == 1U)
     {
-        gAlignQepCountSum += (float)((Uint32)EQep2Regs.QPOSCNT);
-        gAlignQepSampleCount++;
-    }
-}
-
-static void EQEP2_UpdatePositionFromCount(void)
-{
-    float thetaMech;
-
-    gQepCount = (int32_t)EQep2Regs.QPOSCNT;
-    thetaMech = ((float)gQepCount * TWO_PI_F) / (float)ENCODER_COUNTS_PER_REV;
-
-    gThetaMechEncRad = WrapAngle_0_2pi(thetaMech);
-    gThetaElecEncRad = WrapAngle_0_2pi((ENCODER_MECH_SIGN * MOTOR_POLE_PAIRS * gThetaMechEncRad) +
-                                       gThetaElecOffsetRad +
-                                       ENCODER_ELEC_ZERO_BIAS_RAD +
-                                       ENCODER_OFFSET_EXTRA_RAD);
-
-#if ENCODER_USE_EQEP2_INDEX
-    if(EQep2Regs.QFLG.bit.IEL == 1U)
-    {
-        gQepIndexSeen = 1U;
-        EQep2Regs.QCLR.bit.IEL = 1U;
-    }
-#endif
-}
-
-static void EQEP2_CaptureElecOffsetFromAlign(void)
-{
-    float avgCount;
-    float thetaMechAvg;
-
-    if(gAlignQepSampleCount == 0U)
-    {
-        avgCount = (float)((Uint32)EQep2Regs.QPOSCNT);
+        CpuSysRegs.PCLKCR4.bit.EQEP1 = 1U;
+        q = &EQep1Regs;
     }
     else
     {
-        avgCount = gAlignQepCountSum / (float)gAlignQepSampleCount;
+        CpuSysRegs.PCLKCR4.bit.EQEP2 = 1U;
+        q = &EQep2Regs;
     }
+    EDIS;
 
-    thetaMechAvg = (avgCount * TWO_PI_F) / (float)ENCODER_COUNTS_PER_REV;
-    thetaMechAvg = WrapAngle_0_2pi(thetaMechAvg);
+    q->QDECCTL.all = 0U;
+    q->QEPCTL.all  = 0U;
+    q->QCAPCTL.all = 0U;
 
-    gThetaElecOffsetRad = WrapAngle_0_2pi(ALIGN_ELEC_ANGLE_RAD -
-                                          (ENCODER_MECH_SIGN * MOTOR_POLE_PAIRS * thetaMechAvg));
+    q->QDECCTL.bit.QSRC = 0U;
+    q->QDECCTL.bit.SWAP = hw->EncoderSwapAB ? 1U : 0U;
 
-    EQEP2_UpdatePositionFromCount();
+    q->QPOSINIT = 0U;
+    q->QPOSMAX  = (Uint32)(hw->EncoderCountsPerRev - 1U);
+    q->QPOSCNT  = 0U;
+
+    q->QEPCTL.bit.FREE_SOFT = 2U;
+    q->QEPCTL.bit.PCRM      = 1U;
+    q->QEPCTL.bit.IEI       = 0U;
+    q->QEPCTL.bit.SWI       = 1U;
+    q->QEPCTL.bit.QPEN      = 1U;
+
+    q->QCLR.all = 0xFFFFU;
 }
 
-static void EQEP2_UpdateSpeed_1kHz(void)
+static void EQEP_ResetEstimator(volatile MotorCtrl_t *m, const MotorHw_t *hw)
 {
-    // Hýz hesabý 1 kHz zaman tabanýnda, pozisyon bilgisi ise ayrýca ADC ISR içinde de güncellenir.
+    volatile struct EQEP_REGS *q = (hw->EqepModule == 1U) ? &EQep1Regs : &EQep2Regs;
+
+    m->QepCount = (int32_t)q->QPOSCNT;
+    m->QepPrevCount = m->QepCount;
+    m->QepDeltaCount = 0;
+    m->QepIndexSeen = 0U;
+
+    m->SpeedMechFbRpm = 0.0f;
+    m->SpeedMechFbRpmFilt = 0.0f;
+    m->OmegaMechFbRad_s = 0.0f;
+    m->OmegaElecFbRad_s = 0.0f;
+
+    EQEP_UpdatePositionFromCount(m, hw);
+}
+
+static void EQEP_ResetAlignOffsetAccumulator(volatile MotorCtrl_t *m)
+{
+    m->AlignQepCountSum = 0.0f;
+    m->AlignQepSampleCount = 0U;
+}
+
+static void EQEP_RunAlignOffsetAccumulator_1kHz(volatile MotorCtrl_t *m, const MotorHw_t *hw)
+{
+    volatile struct EQEP_REGS *q = (hw->EqepModule == 1U) ? &EQep1Regs : &EQep2Regs;
+
+    if(m->AlignCounterMs >= (ALIGN_TIME_MS - ALIGN_OFFSET_SAMPLE_MS))
+    {
+        m->AlignQepCountSum += (float)((Uint32)q->QPOSCNT);
+        m->AlignQepSampleCount++;
+    }
+}
+
+static void EQEP_UpdatePositionFromCount(volatile MotorCtrl_t *m, const MotorHw_t *hw)
+{
+    volatile struct EQEP_REGS *q = (hw->EqepModule == 1U) ? &EQep1Regs : &EQep2Regs;
+    float thetaMech;
+
+    m->QepCount = (int32_t)q->QPOSCNT;
+    thetaMech = ((float)m->QepCount * TWO_PI_F) / (float)hw->EncoderCountsPerRev;
+
+    m->ThetaMechEncRad = WrapAngle_0_2pi(thetaMech);
+    m->ThetaElecEncRad = WrapAngle_0_2pi((hw->EncoderMechSign * MOTOR_POLE_PAIRS * m->ThetaMechEncRad) +
+                                         m->ThetaElecOffsetRad +
+                                         ENCODER_ELEC_ZERO_BIAS_RAD);
+
+    if(hw->EncoderUseIndex)
+    {
+        if(q->QFLG.bit.IEL == 1U)
+        {
+            m->QepIndexSeen = 1U;
+            q->QCLR.bit.IEL = 1U;
+        }
+    }
+}
+
+static void EQEP_CaptureElecOffsetFromAlign(volatile MotorCtrl_t *m, const MotorHw_t *hw)
+{
+    volatile struct EQEP_REGS *q = (hw->EqepModule == 1U) ? &EQep1Regs : &EQep2Regs;
+    float avgCount;
+    float thetaMechAvg;
+
+    if(m->AlignQepSampleCount == 0U)
+    {
+        avgCount = (float)((Uint32)q->QPOSCNT);
+    }
+    else
+    {
+        avgCount = m->AlignQepCountSum / (float)m->AlignQepSampleCount;
+    }
+
+    thetaMechAvg = (avgCount * TWO_PI_F) / (float)hw->EncoderCountsPerRev;
+    thetaMechAvg = WrapAngle_0_2pi(thetaMechAvg);
+
+    m->ThetaElecOffsetRad = WrapAngle_0_2pi(ALIGN_ELEC_ANGLE_RAD -
+                                            (hw->EncoderMechSign * MOTOR_POLE_PAIRS * thetaMechAvg));
+
+    EQEP_UpdatePositionFromCount(m, hw);
+}
+
+static void EQEP_UpdateSpeed_1kHz(volatile MotorCtrl_t *m, const MotorHw_t *hw)
+{
+    volatile struct EQEP_REGS *q = (hw->EqepModule == 1U) ? &EQep1Regs : &EQep2Regs;
     int32_t posNow, delta, halfCounts;
     float speedInstRpm;
 
-    posNow = (int32_t)EQep2Regs.QPOSCNT;
-    delta = posNow - gQepPrevCount;
-    halfCounts = (int32_t)(ENCODER_COUNTS_PER_REV / 2U);
+    posNow = (int32_t)q->QPOSCNT;
+    delta = posNow - m->QepPrevCount;
+    halfCounts = (int32_t)(hw->EncoderCountsPerRev / 2U);
 
     if(delta > halfCounts)
     {
-        delta -= (int32_t)ENCODER_COUNTS_PER_REV;
+        delta -= (int32_t)hw->EncoderCountsPerRev;
     }
     else if(delta < -halfCounts)
     {
-        delta += (int32_t)ENCODER_COUNTS_PER_REV;
+        delta += (int32_t)hw->EncoderCountsPerRev;
     }
 
-    gQepPrevCount = posNow;
-    gQepCount = posNow;
-    gQepDeltaCount = delta;
+    m->QepPrevCount = posNow;
+    m->QepCount = posNow;
+    m->QepDeltaCount = delta;
 
     speedInstRpm = ((((float)delta) * 60.0f) /
-                   ((float)ENCODER_COUNTS_PER_REV * TIMER0_TS)) * ENCODER_MECH_SIGN;
+                    ((float)hw->EncoderCountsPerRev * TIMER0_TS)) * hw->EncoderMechSign;
 
-    gSpeedMechFbRpm = speedInstRpm;
-    gSpeedMechFbRpmFilt += SPEED_FILT_ALPHA *
-                           (gSpeedMechFbRpm - gSpeedMechFbRpmFilt);
+    m->SpeedMechFbRpm = speedInstRpm;
+    m->SpeedMechFbRpmFilt += SPEED_FILT_ALPHA * (m->SpeedMechFbRpm - m->SpeedMechFbRpmFilt);
 
-    if(fabsf(gSpeedMechFbRpmFilt) < 1.0f)
+    if(fabsf(m->SpeedMechFbRpmFilt) < 1.0f)
     {
-        gSpeedMechFbRpmFilt = 0.0f;
+        m->SpeedMechFbRpmFilt = 0.0f;
     }
 
-    gOmegaMechFbRad_s = gSpeedMechFbRpmFilt * (TWO_PI_F / 60.0f);
-    gOmegaElecFbRad_s = gOmegaMechFbRad_s * MOTOR_POLE_PAIRS;
+    m->OmegaMechFbRad_s = m->SpeedMechFbRpmFilt * (TWO_PI_F / 60.0f);
+    m->OmegaElecFbRad_s = m->OmegaMechFbRad_s * MOTOR_POLE_PAIRS;
 
-    EQEP2_UpdatePositionFromCount();
+    EQEP_UpdatePositionFromCount(m, hw);
 }
-
 
 static Uint16 PWM_DeadtimeCounts(float deadtime_ns)
 {
@@ -801,42 +1038,46 @@ static void PWM_InitSingleEPwm(volatile struct EPWM_REGS *p)
     p->TBCTL.bit.CTRMODE = 2;
 }
 
-static void PWM_InitInverter(void)
+static void PWM_InitInverters(void)
 {
     EALLOW;
+    PWM_InitSingleEPwm(&EPwm1Regs);
+    PWM_InitSingleEPwm(&EPwm2Regs);
+    PWM_InitSingleEPwm(&EPwm3Regs);
     PWM_InitSingleEPwm(&EPwm4Regs);
     PWM_InitSingleEPwm(&EPwm5Regs);
     PWM_InitSingleEPwm(&EPwm6Regs);
 
-    EPwm4Regs.CMPB.bit.CMPB      = (Uint16)(TBPRD_VAL - 80U);
-    EPwm4Regs.ETSEL.bit.SOCAEN   = 1U;
-    EPwm4Regs.ETSEL.bit.SOCASEL  = 6U;
-    EPwm4Regs.ETPS.bit.SOCAPRD   = 1U;
-    EPwm4Regs.ETCLR.bit.SOCA     = 1U;
+    // Tek ADC tetikleyici: ePWM1 SOCA
+    EPwm1Regs.CMPB.bit.CMPB      = (Uint16)(TBPRD_VAL - 80U);
+    EPwm1Regs.ETSEL.bit.SOCAEN   = 1U;
+    EPwm1Regs.ETSEL.bit.SOCASEL  = 6U;
+    EPwm1Regs.ETPS.bit.SOCAPRD   = 1U;
+    EPwm1Regs.ETCLR.bit.SOCA     = 1U;
     EDIS;
 }
 
-static void PWM_EnableOutputs(Uint16 enable)
+static void PWM_EnableOutputs(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 enable)
 {
     EALLOW;
     if(enable)
     {
-        EPwm4Regs.TZCLR.bit.OST = 1U;
-        EPwm5Regs.TZCLR.bit.OST = 1U;
-        EPwm6Regs.TZCLR.bit.OST = 1U;
-        gPwmEnabled = 1U;
+        hw->PwmA->TZCLR.bit.OST = 1U;
+        hw->PwmB->TZCLR.bit.OST = 1U;
+        hw->PwmC->TZCLR.bit.OST = 1U;
+        m->PwmEnabled = 1U;
     }
     else
     {
-        EPwm4Regs.TZFRC.bit.OST = 1U;
-        EPwm5Regs.TZFRC.bit.OST = 1U;
-        EPwm6Regs.TZFRC.bit.OST = 1U;
-        gPwmEnabled = 0U;
+        hw->PwmA->TZFRC.bit.OST = 1U;
+        hw->PwmB->TZFRC.bit.OST = 1U;
+        hw->PwmC->TZFRC.bit.OST = 1U;
+        m->PwmEnabled = 0U;
     }
     EDIS;
 }
 
-static void PWM_UpdateDutyABC(float dutyA, float dutyB, float dutyC)
+static void PWM_UpdateDutyABC(volatile MotorCtrl_t *m, const MotorHw_t *hw, float dutyA, float dutyB, float dutyC)
 {
     Uint16 cmpA, cmpB, cmpC;
 
@@ -848,13 +1089,13 @@ static void PWM_UpdateDutyABC(float dutyA, float dutyB, float dutyC)
     cmpB = (Uint16)(dutyB * (float)TBPRD_VAL);
     cmpC = (Uint16)(dutyC * (float)TBPRD_VAL);
 
-    EPwm4Regs.CMPA.bit.CMPA = cmpA;
-    EPwm5Regs.CMPA.bit.CMPA = cmpB;
-    EPwm6Regs.CMPA.bit.CMPA = cmpC;
+    hw->PwmA->CMPA.bit.CMPA = cmpA;
+    hw->PwmB->CMPA.bit.CMPA = cmpB;
+    hw->PwmC->CMPA.bit.CMPA = cmpC;
 
-    gDutyA = dutyA;
-    gDutyB = dutyB;
-    gDutyC = dutyC;
+    m->DutyA = dutyA;
+    m->DutyB = dutyB;
+    m->DutyC = dutyC;
 }
 
 static void CPU_TIMER0_Init1kHz(void)
@@ -872,319 +1113,387 @@ static void CPU_TIMER0_Init1kHz(void)
 }
 
 // ===================== DRV8301 =====================
-static void DRV8301_SetDCCal(Uint16 enable)
+static void DRV8301_SetDCCal(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 enable)
 {
-    GPIO_WritePin(PIN_DRV_DC_CAL, enable ? 1U : 0U);
-    gDcCalPinState = enable ? 1U : 0U;
+    GPIO_WritePin(hw->PinDcCal, enable ? 1U : 0U);
+    m->DcCalPinState = enable ? 1U : 0U;
 }
 
-static void DRV8301_SetGateEnable(Uint16 enable)
+static void DRV8301_SetGateEnable(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 enable)
 {
-    GPIO_WritePin(PIN_DRV_EN_GATE, enable ? 1U : 0U);
-    gGateEnableState = enable ? 1U : 0U;
+    GPIO_WritePin(hw->PinEnGate, enable ? 1U : 0U);
+    m->GateEnableState = enable ? 1U : 0U;
 }
 
-static void DRV8301_ReadStatusPins(void)
+static void DRV8301_ReadStatusPins(volatile MotorCtrl_t *m, const MotorHw_t *hw)
 {
-    gFaultState = GPIO_ReadPin(PIN_DRV_FAULT);
-    gOctwState  = GPIO_ReadPin(PIN_DRV_OCTW);
+    m->FaultState = GPIO_ReadPin(hw->PinFault);
+    m->OctwState  = GPIO_ReadPin(hw->PinOctw);
 
-    gFaultActive = (gFaultState == 0U) ? 1U : 0U;
-    gOctwActive  = (gOctwState  == 0U) ? 1U : 0U;
+    m->FaultActive = (m->FaultState == 0U) ? 1U : 0U;
+    m->OctwActive  = (m->OctwState  == 0U) ? 1U : 0U;
 }
 
-static void SPIB_InitDrv8301(void)
+static inline void DRV8301_CS_Low(const MotorHw_t *hw)
 {
-    EALLOW;
-    CpuSysRegs.PCLKCR8.bit.SPI_B = 1U;
-
-    // GPIO63 -> SPIB SIMO
-    GpioCtrlRegs.GPBPUD.bit.GPIO63 = 0;
-    GpioCtrlRegs.GPBQSEL2.bit.GPIO63 = 3;
-    GpioCtrlRegs.GPBGMUX2.bit.GPIO63 = 3;
-    GpioCtrlRegs.GPBMUX2.bit.GPIO63 = 3;
-
-    // GPIO64 -> SPIB SOMI
-    GpioCtrlRegs.GPCPUD.bit.GPIO64 = 0;
-    GpioCtrlRegs.GPCQSEL1.bit.GPIO64 = 3;
-    GpioCtrlRegs.GPCGMUX1.bit.GPIO64 = 3;
-    GpioCtrlRegs.GPCMUX1.bit.GPIO64 = 3;
-
-    // GPIO65 -> SPIB CLK
-    GpioCtrlRegs.GPCPUD.bit.GPIO65 = 0;
-    GpioCtrlRegs.GPCQSEL1.bit.GPIO65 = 3;
-    GpioCtrlRegs.GPCGMUX1.bit.GPIO65 = 3;
-    GpioCtrlRegs.GPCMUX1.bit.GPIO65 = 3;
-
-    // GPIO66 -> manuel chip select olarak GPIO
-    GpioCtrlRegs.GPCPUD.bit.GPIO66 = 0;
-    GpioCtrlRegs.GPCQSEL1.bit.GPIO66 = 3;
-
-    EDIS;
-
-    SpibRegs.SPICCR.bit.SPISWRESET  = 0U;
-    SpibRegs.SPICCR.bit.SPICHAR     = 15U;
-    SpibRegs.SPICCR.bit.CLKPOLARITY = 0U;
-    SpibRegs.SPICCR.bit.SPILBK      = 0U;
-
-    SpibRegs.SPICTL.bit.MASTER_SLAVE = 1U;
-    SpibRegs.SPICTL.bit.TALK         = 1U;
-    SpibRegs.SPICTL.bit.CLK_PHASE    = 0U;
-    SpibRegs.SPICTL.bit.SPIINTENA    = 0U;
-
-    SpibRegs.SPIBRR.bit.SPI_BIT_RATE = 49U;
-    SpibRegs.SPIPRI.bit.FREE = 1U;
-    SpibRegs.SPIPRI.bit.SOFT = 1U;
-
-    SpibRegs.SPICCR.bit.SPISWRESET = 1U;
+    GPIO_WritePin(hw->PinSpiCs, 0U);
 }
 
-static inline void DRV8301_CS_Low(void)
+static inline void DRV8301_CS_High(const MotorHw_t *hw)
 {
-    GPIO_WritePin(PIN_DRV_SPI_CS, 0U);
+    GPIO_WritePin(hw->PinSpiCs, 1U);
 }
 
-static inline void DRV8301_CS_High(void)
+static Uint16 SPI_Transfer16(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 data)
 {
-    GPIO_WritePin(PIN_DRV_SPI_CS, 1U);
+    if(hw->SpiModule == SPI_MODULE_A)
+    {
+        while(SpiaRegs.SPISTS.bit.BUFFULL_FLAG == 1U) {}
+        SpiaRegs.SPITXBUF = data;
+        while(SpiaRegs.SPISTS.bit.INT_FLAG == 0U) {}
+        m->DrvLastRxWord = SpiaRegs.SPIRXBUF;
+    }
+    else
+    {
+        while(SpibRegs.SPISTS.bit.BUFFULL_FLAG == 1U) {}
+        SpibRegs.SPITXBUF = data;
+        while(SpibRegs.SPISTS.bit.INT_FLAG == 0U) {}
+        m->DrvLastRxWord = SpibRegs.SPIRXBUF;
+    }
+
+    return m->DrvLastRxWord;
 }
 
-static Uint16 SPIB_Transfer16(Uint16 data)
-{
-    while(SpibRegs.SPISTS.bit.BUFFULL_FLAG == 1U) {}
-    SpibRegs.SPITXBUF = data;
-    while(SpibRegs.SPISTS.bit.INT_FLAG == 0U) {}
-    gDrvLastRxWord = SpibRegs.SPIRXBUF;
-    return gDrvLastRxWord;
-}
-
-static Uint16 DRV8301_ReadReg(Uint16 addr)
+static Uint16 DRV8301_ReadReg(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 addr)
 {
     Uint16 cmd, resp;
     cmd = 0x8000U | ((addr & 0x000FU) << 11);
 
-    DRV8301_CS_Low();
-    SPIB_Transfer16(cmd);
-    DRV8301_CS_High();
+    DRV8301_CS_Low(hw);
+    SPI_Transfer16(m, hw, cmd);
+    DRV8301_CS_High(hw);
 
     asm(" RPT #20 || NOP");
 
-    DRV8301_CS_Low();
-    resp = SPIB_Transfer16(0x0000U);
-    DRV8301_CS_High();
+    DRV8301_CS_Low(hw);
+    resp = SPI_Transfer16(m, hw, 0x0000U);
+    DRV8301_CS_High(hw);
 
     return resp;
 }
 
-static Uint16 DRV8301_WriteReg(Uint16 addr, Uint16 data11)
+static Uint16 DRV8301_WriteReg(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 addr, Uint16 data11)
 {
     Uint16 cmd, resp;
     cmd = ((addr & 0x000FU) << 11) | (data11 & 0x07FFU);
 
-    DRV8301_CS_Low();
-    SPIB_Transfer16(cmd);
-    DRV8301_CS_High();
+    DRV8301_CS_Low(hw);
+    SPI_Transfer16(m, hw, cmd);
+    DRV8301_CS_High(hw);
 
     asm(" RPT #20 || NOP");
 
-    DRV8301_CS_Low();
-    resp = SPIB_Transfer16(0x0000U);
-    DRV8301_CS_High();
+    DRV8301_CS_Low(hw);
+    resp = SPI_Transfer16(m, hw, 0x0000U);
+    DRV8301_CS_High(hw);
 
     return resp;
 }
 
-static void DRV8301_ReadAllRegs(void)
+static void DRV8301_ReadAllRegs(volatile MotorCtrl_t *m, const MotorHw_t *hw)
 {
-    gDrvStat1Raw = DRV8301_ReadReg(DRV8301_REG_STATUS1);
-    gDrvStat1Raw = DRV8301_ReadReg(DRV8301_REG_STATUS1);
+    m->DrvStat1Raw = DRV8301_ReadReg(m, hw, DRV8301_REG_STATUS1);
+    m->DrvStat1Raw = DRV8301_ReadReg(m, hw, DRV8301_REG_STATUS1);
 
-    gDrvStat2Raw = DRV8301_ReadReg(DRV8301_REG_STATUS2);
-    gDrvStat2Raw = DRV8301_ReadReg(DRV8301_REG_STATUS2);
+    m->DrvStat2Raw = DRV8301_ReadReg(m, hw, DRV8301_REG_STATUS2);
+    m->DrvStat2Raw = DRV8301_ReadReg(m, hw, DRV8301_REG_STATUS2);
 
-    gDrvCtrl1Raw = DRV8301_ReadReg(DRV8301_REG_CONTROL1);
-    gDrvCtrl1Raw = DRV8301_ReadReg(DRV8301_REG_CONTROL1);
+    m->DrvCtrl1Raw = DRV8301_ReadReg(m, hw, DRV8301_REG_CONTROL1);
+    m->DrvCtrl1Raw = DRV8301_ReadReg(m, hw, DRV8301_REG_CONTROL1);
 
-    gDrvCtrl2Raw = DRV8301_ReadReg(DRV8301_REG_CONTROL2);
-    gDrvCtrl2Raw = DRV8301_ReadReg(DRV8301_REG_CONTROL2);
+    m->DrvCtrl2Raw = DRV8301_ReadReg(m, hw, DRV8301_REG_CONTROL2);
+    m->DrvCtrl2Raw = DRV8301_ReadReg(m, hw, DRV8301_REG_CONTROL2);
 
-    gDrvStat1Data = gDrvStat1Raw & 0x07FFU;
-    gDrvStat2Data = gDrvStat2Raw & 0x07FFU;
-    gDrvCtrl1Data = gDrvCtrl1Raw & 0x07FFU;
-    gDrvCtrl2Data = gDrvCtrl2Raw & 0x07FFU;
+    m->DrvStat1Data = m->DrvStat1Raw & 0x07FFU;
+    m->DrvStat2Data = m->DrvStat2Raw & 0x07FFU;
+    m->DrvCtrl1Data = m->DrvCtrl1Raw & 0x07FFU;
+    m->DrvCtrl2Data = m->DrvCtrl2Raw & 0x07FFU;
 
-    gDrvFrameFault = (gDrvStat1Raw >> 15) & 0x1U;
-    gDrvDeviceID   = (gDrvStat2Data & 0x000FU);
+    m->DrvFrameFault = (m->DrvStat1Raw >> 15) & 0x1U;
+    m->DrvDeviceID   = (m->DrvStat2Data & 0x000FU);
 }
 
-static void DRV8301_SetCurrentAmpGain(Uint16 gainBits)
+static void DRV8301_SetCurrentAmpGain(volatile MotorCtrl_t *m, const MotorHw_t *hw, Uint16 gainBits)
 {
-    Uint16 ctrl2 = gDrvCtrl2Data;
+    Uint16 ctrl2 = m->DrvCtrl2Data;
 
     ctrl2 &= ~(0x000CU | 0x0003U);
     ctrl2 |= DRV8301_CTRL2_OCTW_BOTH;
     ctrl2 |= gainBits;
 
-    DRV8301_WriteReg(DRV8301_REG_CONTROL2, ctrl2);
+    DRV8301_WriteReg(m, hw, DRV8301_REG_CONTROL2, ctrl2);
     DELAY_US(50);
-    DRV8301_ReadAllRegs();
+    DRV8301_ReadAllRegs(m, hw);
 
     switch(gainBits)
     {
-        case DRV8301_CTRL2_GAIN_10VV: gCsaGain_VV = 10.0f; break;
-        case DRV8301_CTRL2_GAIN_20VV: gCsaGain_VV = 20.0f; break;
-        case DRV8301_CTRL2_GAIN_40VV: gCsaGain_VV = 40.0f; break;
-        case DRV8301_CTRL2_GAIN_80VV: gCsaGain_VV = 80.0f; break;
-        default: gCsaGain_VV = 20.0f; break;
+        case DRV8301_CTRL2_GAIN_10VV: m->CsaGain_VV = 10.0f; break;
+        case DRV8301_CTRL2_GAIN_20VV: m->CsaGain_VV = 20.0f; break;
+        case DRV8301_CTRL2_GAIN_40VV: m->CsaGain_VV = 40.0f; break;
+        case DRV8301_CTRL2_GAIN_80VV: m->CsaGain_VV = 80.0f; break;
+        default: m->CsaGain_VV = 20.0f; break;
     }
 }
 
 // ===================== Calibration =====================
-static void StartCurrentOffsetCalibration(void)
+static void StartCurrentOffsetCalibrationAll(void)
 {
-    gIA_sum = 0U;
-    gFilterInitDone = 0U;
-    gIB_sum = 0U;
-    gCalCount = 0U;
-    gCalDone = 0U;
-    gCalActive = 1U;
+    gM1.IA_sum = 0U;
+    gM1.IB_sum = 0U;
+    gM1.CalCount = 0U;
+    gM1.CalDone = 0U;
+    gM1.CalActive = 1U;
+    gM1.FilterInitDone = 0U;
 
-    PWM_EnableOutputs(0U);
-    DRV8301_SetGateEnable(1U);
-    DRV8301_SetDCCal(1U);
+    gM2.IA_sum = 0U;
+    gM2.IB_sum = 0U;
+    gM2.CalCount = 0U;
+    gM2.CalDone = 0U;
+    gM2.CalActive = 1U;
+    gM2.FilterInitDone = 0U;
+
+    PWM_EnableOutputs(&gM1, &gM1Hw, 0U);
+    PWM_EnableOutputs(&gM2, &gM2Hw, 0U);
+
+    DRV8301_SetGateEnable(&gM1, &gM1Hw, 1U);
+    DRV8301_SetGateEnable(&gM2, &gM2Hw, 1U);
+
+    DRV8301_SetDCCal(&gM1, &gM1Hw, 1U);
+    DRV8301_SetDCCal(&gM2, &gM2Hw, 1U);
 
     DELAY_US(2000);
 }
 
-static void WaitCurrentOffsetCalibrationDone(void)
+static void WaitCurrentOffsetCalibrationDoneAll(void)
 {
-    while(gCalDone == 0U) {}
+    while((gM1.CalDone == 0U) || (gM2.CalDone == 0U)) {}
 
-    gIA_offset_counts = ((float)gIA_sum) / (float)CURR_OFFSET_SAMPLES;
-    gIB_offset_counts = ((float)gIB_sum) / (float)CURR_OFFSET_SAMPLES;
+    gM1.IA_offset_counts = ((float)gM1.IA_sum) / (float)CURR_OFFSET_SAMPLES;
+    gM1.IB_offset_counts = ((float)gM1.IB_sum) / (float)CURR_OFFSET_SAMPLES;
 
-    DRV8301_SetDCCal(0U);
+    gM2.IA_offset_counts = ((float)gM2.IA_sum) / (float)CURR_OFFSET_SAMPLES;
+    gM2.IB_offset_counts = ((float)gM2.IB_sum) / (float)CURR_OFFSET_SAMPLES;
+
+    DRV8301_SetDCCal(&gM1, &gM1Hw, 0U);
+    DRV8301_SetDCCal(&gM2, &gM2Hw, 0U);
+
     DELAY_US(1000);
-    DRV8301_ReadAllRegs();
+    DRV8301_ReadAllRegs(&gM1, &gM1Hw);
+    DRV8301_ReadAllRegs(&gM2, &gM2Hw);
 }
 
-static void CalibrateVbusDividerFromKnownBus(float measuredBusV)
+static void CalibrateVbusDividersAll(float measuredBusV)
 {
-    float adcPinV = ((float)gVBS_raw * ADC_VREF) / ADC_MAX_COUNT;
+    float adcPinV;
 
+    adcPinV = ((float)gM1.VBS_raw * ADC_VREF) / ADC_MAX_COUNT;
     if((measuredBusV > 0.1f) && (adcPinV > 0.01f))
     {
-        gVbusDividerGain = measuredBusV / adcPinV;
-        gVbusSatBus_V = ADC_VREF * gVbusDividerGain;
+        gM1.VbusDividerGain = measuredBusV / adcPinV;
+        gM1.VbusSatBus_V = ADC_VREF * gM1.VbusDividerGain;
+    }
+
+    adcPinV = ((float)gM2.VBS_raw * ADC_VREF) / ADC_MAX_COUNT;
+    if((measuredBusV > 0.1f) && (adcPinV > 0.01f))
+    {
+        gM2.VbusDividerGain = measuredBusV / adcPinV;
+        gM2.VbusSatBus_V = ADC_VREF * gM2.VbusDividerGain;
     }
 }
 
 // ===================== ISR içi ölçüm / kontrol =====================
-static inline void ConvertRawToPhysical(void)
+static inline void ConvertRawToPhysical(volatile MotorCtrl_t *m)
 {
-    gIA_adc_V  = ((float)gIA_raw  * ADC_VREF) / ADC_MAX_COUNT;
-    gIB_adc_V  = ((float)gIB_raw  * ADC_VREF) / ADC_MAX_COUNT;
-    gVBS_adc_V = ((float)gVBS_raw * ADC_VREF) / ADC_MAX_COUNT;
+    m->IA_adc_V  = ((float)m->IA_raw  * ADC_VREF) / ADC_MAX_COUNT;
+    m->IB_adc_V  = ((float)m->IB_raw  * ADC_VREF) / ADC_MAX_COUNT;
+    m->VBS_adc_V = ((float)m->VBS_raw * ADC_VREF) / ADC_MAX_COUNT;
 
-    gIA_corr_counts = (int32_t)gIA_raw - (int32_t)(gIA_offset_counts + 0.5f);
-    gIB_corr_counts = (int32_t)gIB_raw - (int32_t)(gIB_offset_counts + 0.5f);
+    m->IA_corr_counts = (int32_t)m->IA_raw - (int32_t)(m->IA_offset_counts + 0.5f);
+    m->IB_corr_counts = (int32_t)m->IB_raw - (int32_t)(m->IB_offset_counts + 0.5f);
 
-    gIA_corr_V = ((float)gIA_corr_counts * ADC_VREF) / ADC_MAX_COUNT;
-    gIB_corr_V = ((float)gIB_corr_counts * ADC_VREF) / ADC_MAX_COUNT;
+    m->IA_corr_V = ((float)m->IA_corr_counts * ADC_VREF) / ADC_MAX_COUNT;
+    m->IB_corr_V = ((float)m->IB_corr_counts * ADC_VREF) / ADC_MAX_COUNT;
 
-    gIA_A = IA_SIGN * (gIA_corr_V / (gCsaGain_VV * CURRENT_SHUNT_OHM));
-    gIB_A = IB_SIGN * (gIB_corr_V / (gCsaGain_VV * CURRENT_SHUNT_OHM));
-    gIC_A = -(gIA_A + gIB_A);
+    m->IA_A = IA_SIGN * (m->IA_corr_V / (m->CsaGain_VV * CURRENT_SHUNT_OHM));
+    m->IB_A = IB_SIGN * (m->IB_corr_V / (m->CsaGain_VV * CURRENT_SHUNT_OHM));
+    m->IC_A = -(m->IA_A + m->IB_A);
 
-    gVBS_bus_V = (((float)gVBS_raw * ADC_VREF) / ADC_MAX_COUNT) * gVbusDividerGain;
-    gVbusSatBus_V = ADC_VREF * gVbusDividerGain;
+    m->VBS_bus_V = (((float)m->VBS_raw * ADC_VREF) / ADC_MAX_COUNT) * m->VbusDividerGain;
+    m->VbusSatBus_V = ADC_VREF * m->VbusDividerGain;
 }
 
-static inline void UpdateFiltersAndAlarms_ISR(void)
+static inline void UpdateFiltersAndAlarms_ISR(volatile MotorCtrl_t *m)
 {
-    if(gFilterInitDone == 0U)
+    if(m->FilterInitDone == 0U)
     {
-        gIA_A_filt = gIA_A;
-        gIB_A_filt = gIB_A;
-        gVBS_bus_V_filt = gVBS_bus_V;
-        gFilterInitDone = 1U;
+        m->IA_A_filt = m->IA_A;
+        m->IB_A_filt = m->IB_A;
+        m->VBS_bus_V_filt = m->VBS_bus_V;
+        m->FilterInitDone = 1U;
     }
     else
     {
-        gIA_A_filt += I_FILT_ALPHA * (gIA_A - gIA_A_filt);
-        gIB_A_filt += I_FILT_ALPHA * (gIB_A - gIB_A_filt);
-        gVBS_bus_V_filt += VBUS_FILT_ALPHA * (gVBS_bus_V - gVBS_bus_V_filt);
+        m->IA_A_filt += I_FILT_ALPHA * (m->IA_A - m->IA_A_filt);
+        m->IB_A_filt += I_FILT_ALPHA * (m->IB_A - m->IB_A_filt);
+        m->VBS_bus_V_filt += VBUS_FILT_ALPHA * (m->VBS_bus_V - m->VBS_bus_V_filt);
     }
 
-    gVbusNearClip = (gVBS_raw >= VBUS_NEAR_CLIP_RAW) ? 1U : 0U;
-    gVbusSaturated = (gVBS_raw >= VBUS_SAT_RAW) ? 1U : 0U;
+    m->VbusNearClip = (m->VBS_raw >= VBUS_NEAR_CLIP_RAW) ? 1U : 0U;
+    m->VbusSaturated = (m->VBS_raw >= VBUS_SAT_RAW) ? 1U : 0U;
 }
 
-static void SVPWM_Apply(float vAlpha, float vBeta, float vdc)
+static void SVPWM_Apply(volatile MotorCtrl_t *m, const MotorHw_t *hw, float vAlpha, float vBeta, float vdc)
 {
-    float va, vb, vc;
-    float vmax, vmin, vcom;
+    float vRef;
+    float angle;
+    float theta_s;
+    float k;
+    float T1;
+    float T2;
+    float T0;
+    float halfT0;
     float dutyA, dutyB, dutyC;
+    Uint16 sector;
+
+    (void)m;
 
     if(vdc < 1.0f)
     {
-        PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
+        PWM_UpdateDutyABC(m, hw, 0.5f, 0.5f, 0.5f);
         return;
     }
 
-    va = vAlpha;
-    vb = -0.5f * vAlpha + SQRT3_BY_2_F * vBeta;
-    vc = -0.5f * vAlpha - SQRT3_BY_2_F * vBeta;
+    vRef = sqrtf((vAlpha * vAlpha) + (vBeta * vBeta));
+    if(vRef < 1.0e-6f)
+    {
+        PWM_UpdateDutyABC(m, hw, 0.5f, 0.5f, 0.5f);
+        return;
+    }
 
-    vmax = va;
-    if(vb > vmax) vmax = vb;
-    if(vc > vmax) vmax = vc;
+    angle = atan2f(vBeta, vAlpha);
+    if(angle < 0.0f)
+    {
+        angle += TWO_PI_F;
+    }
+    else if(angle >= TWO_PI_F)
+    {
+        angle -= TWO_PI_F;
+    }
 
-    vmin = va;
-    if(vb < vmin) vmin = vb;
-    if(vc < vmin) vmin = vc;
+    sector = (Uint16)(angle / (PI_F / 3.0f)) + 1U;
+    if(sector > 6U)
+    {
+        sector = 6U;
+    }
 
-    vcom = 0.5f * (vmax + vmin);
+    theta_s = angle - ((float)(sector - 1U) * (PI_F / 3.0f));
 
-    dutyA = 0.5f + ((va - vcom) / vdc);
-    dutyB = 0.5f + ((vb - vcom) / vdc);
-    dutyC = 0.5f + ((vc - vcom) / vdc);
+    k  = (SQRT3_F * vRef) / vdc;
+    T1 = k * sinf((PI_F / 3.0f) - theta_s);
+    T2 = k * sinf(theta_s);
 
-    PWM_UpdateDutyABC(dutyA, dutyB, dutyC);
+    if(T1 < 0.0f) T1 = 0.0f;
+    if(T2 < 0.0f) T2 = 0.0f;
+
+    if((T1 + T2) > 1.0f)
+    {
+        float scale = 1.0f / (T1 + T2);
+        T1 *= scale;
+        T2 *= scale;
+    }
+
+    T0 = 1.0f - T1 - T2;
+    if(T0 < 0.0f)
+    {
+        T0 = 0.0f;
+    }
+    halfT0 = 0.5f * T0;
+
+    switch(sector)
+    {
+        case 1U:
+            dutyA = T1 + T2 + halfT0;
+            dutyB = T2 + halfT0;
+            dutyC = halfT0;
+            break;
+
+        case 2U:
+            dutyA = T1 + halfT0;
+            dutyB = T1 + T2 + halfT0;
+            dutyC = halfT0;
+            break;
+
+        case 3U:
+            dutyA = halfT0;
+            dutyB = T1 + T2 + halfT0;
+            dutyC = T2 + halfT0;
+            break;
+
+        case 4U:
+            dutyA = halfT0;
+            dutyB = T1 + halfT0;
+            dutyC = T1 + T2 + halfT0;
+            break;
+
+        case 5U:
+            dutyA = T2 + halfT0;
+            dutyB = halfT0;
+            dutyC = T1 + T2 + halfT0;
+            break;
+
+        case 6U:
+        default:
+            dutyA = T1 + T2 + halfT0;
+            dutyB = halfT0;
+            dutyC = T1 + halfT0;
+            break;
+    }
+
+    PWM_UpdateDutyABC(m, hw, dutyA, dutyB, dutyC);
 }
 
-static void Align_ApplyVoltageVector(float theta_e_align, float modIndex, float vdc)
+static void Align_ApplyVoltageVector(volatile MotorCtrl_t *m, const MotorHw_t *hw, float theta_e_align, float modIndex, float vdc)
 {
     float vLimit = 0.577f * vdc * FOC_VOLT_LIMIT_FACTOR;
     float vMag   = modIndex * vLimit;
     float vAlpha = vMag * cosf(theta_e_align);
     float vBeta  = vMag * sinf(theta_e_align);
 
-    SVPWM_Apply(vAlpha, vBeta, vdc);
+    SVPWM_Apply(m, hw, vAlpha, vBeta, vdc);
 }
 
-static void FOC_ResetControllers(void)
+static void FOC_ResetControllers(volatile MotorCtrl_t *m)
 {
-    gIdPI.Ui = 0.0f;
-    gIqPI.Ui = 0.0f;
-    gSpeedPI.Ui = 0.0f;
+    m->IdPI.Ui = 0.0f;
+    m->IqPI.Ui = 0.0f;
+    m->SpeedPI.Ui = 0.0f;
 
-    gIalpha_A = 0.0f;
-    gIbeta_A  = 0.0f;
-    gId_A     = 0.0f;
-    gIq_A     = 0.0f;
+    m->Ialpha_A = 0.0f;
+    m->Ibeta_A  = 0.0f;
+    m->Id_A     = 0.0f;
+    m->Iq_A     = 0.0f;
 
-    gIdRefCmd_A = OPENLOOP_ID_A;
-    gIqRefCmd_A = 0.0f;
-    gIqRefTarget_A = 0.0f;
+    m->IdRefCmd_A = OPENLOOP_ID_A;
+    m->IqRefCmd_A = 0.0f;
+    m->IqRefTarget_A = 0.0f;
 
-    gVdCmd_V = 0.0f;
-    gVqCmd_V = 0.0f;
-    gValphaCmd_V = 0.0f;
-    gVbetaCmd_V = 0.0f;
+    m->VdCmd_V = 0.0f;
+    m->VqCmd_V = 0.0f;
+    m->ValphaCmd_V = 0.0f;
+    m->VbetaCmd_V = 0.0f;
 }
 
-static void FOC_RunCurrentLoop_ISR(void)
+static void FOC_RunCurrentLoop_ISR(volatile MotorCtrl_t *m, const MotorHw_t *hw)
 {
     float c, s;
     float iAlpha, iBeta;
@@ -1195,40 +1504,42 @@ static void FOC_RunCurrentLoop_ISR(void)
     float vdc, vLimit, vNorm, scale;
     float omega_e;
 
-    vdc = gVBS_bus_V;
+    (void)hw;
+
+    vdc = m->VBS_bus_V;
     if(vdc < FOC_MIN_RUN_VBUS_V)
     {
-        PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
+        PWM_UpdateDutyABC(m, hw, 0.5f, 0.5f, 0.5f);
         return;
     }
 
-    c = cosf(gThetaCtrlRad);
-    s = sinf(gThetaCtrlRad);
+    c = cosf(m->ThetaCtrlRad);
+    s = sinf(m->ThetaCtrlRad);
 
-    iAlpha = gIA_A;
-    iBeta  = (gIA_A + 2.0f * gIB_A) * INV_SQRT3_F;
+    iAlpha = m->IA_A;
+    iBeta  = (m->IA_A + 2.0f * m->IB_A) * INV_SQRT3_F;
 
     id =  c * iAlpha + s * iBeta;
     iq = -s * iAlpha + c * iBeta;
 
-    gIalpha_A = iAlpha;
-    gIbeta_A  = iBeta;
-    gId_A     = id;
-    gIq_A     = iq;
+    m->Ialpha_A = iAlpha;
+    m->Ibeta_A  = iBeta;
+    m->Id_A     = id;
+    m->Iq_A     = iq;
 
     vLimit = 0.577f * vdc * FOC_VOLT_LIMIT_FACTOR;
-    gVdqLimit_V = vLimit;
+    m->VdqLimit_V = vLimit;
 
-    gIdPI.OutMin = -vLimit;
-    gIdPI.OutMax =  vLimit;
-    gIqPI.OutMin = -vLimit;
-    gIqPI.OutMax =  vLimit;
+    m->IdPI.OutMin = -vLimit;
+    m->IdPI.OutMax =  vLimit;
+    m->IqPI.OutMin = -vLimit;
+    m->IqPI.OutMax =  vLimit;
 
-    vd_pi = PI_Run(&gIdPI, gIdRefCmd_A, id, CTRL_TS);
-    vq_pi = PI_Run(&gIqPI, gIqRefCmd_A, iq, CTRL_TS);
+    vd_pi = PI_Run(&m->IdPI, m->IdRefCmd_A, id, CTRL_TS);
+    vq_pi = PI_Run(&m->IqPI, m->IqRefCmd_A, iq, CTRL_TS);
 
 #if USE_DECOUPLING_FF
-    omega_e = gOmegaElecFbRad_s;
+    omega_e = m->OmegaElecFbRad_s;
     vd = vd_pi - (omega_e * MOTOR_LS_PHASE_H * iq);
     vq = vq_pi + (omega_e * (MOTOR_LS_PHASE_H * id + PM_FLUX_WB));
 #else
@@ -1246,146 +1557,156 @@ static void FOC_RunCurrentLoop_ISR(void)
         vq *= scale;
     }
 
-    gVdCmd_V = vd;
-    gVqCmd_V = vq;
+    m->VdCmd_V = vd;
+    m->VqCmd_V = vq;
 
     vAlpha = c * vd - s * vq;
     vBeta  = s * vd + c * vq;
 
-    gValphaCmd_V = vAlpha;
-    gVbetaCmd_V  = vBeta;
+    m->ValphaCmd_V = vAlpha;
+    m->VbetaCmd_V  = vBeta;
 
-    SVPWM_Apply(vAlpha, vBeta, vdc);
+    SVPWM_Apply(m, hw, vAlpha, vBeta, vdc);
 }
 
-static void App_ForceStop(void)
+static void App_ForceStop(volatile MotorCtrl_t *m, const MotorHw_t *hw)
 {
-    gAppState = APP_STATE_STOP;
-    gAlignCounterMs = 0U;
-    gVerifyCounterMs = 0U;
+    m->AppState = APP_STATE_STOP;
+    m->AlignCounterMs = 0U;
+    m->VerifyCounterMs = 0U;
 
-    gSpeedCmdRpmRamp = 0.0f;
-    gOmegaMechCmdRad_s = 0.0f;
-    gOmegaElecCmdRad_s = 0.0f;
+    m->SpeedCmdRpmRamp = 0.0f;
+    m->OmegaMechCmdRad_s = 0.0f;
+    m->OmegaElecCmdRad_s = 0.0f;
 
-    gThetaOpenloopRad = ALIGN_ELEC_ANGLE_RAD;
-    gThetaCtrlRad = ALIGN_ELEC_ANGLE_RAD;
-    gThetaElecOffsetRad = 0.0f;
-    gTractionDriveEnable = 0U;
-    gOverCurrentTrip = 0U;
+    m->ThetaOpenloopRad = ALIGN_ELEC_ANGLE_RAD;
+    m->ThetaCtrlRad = ALIGN_ELEC_ANGLE_RAD;
+    m->ThetaElecOffsetRad = 0.0f;
+    m->TractionDriveEnable = 0U;
+    m->OverCurrentTrip = 0U;
 
-    EQEP2_ResetAlignOffsetAccumulator();
-    EQEP2_ResetEstimator();
-    FOC_ResetControllers();
-    PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
-    PWM_EnableOutputs(0U);
+    EQEP_ResetAlignOffsetAccumulator(m);
+    EQEP_ResetEstimator(m, hw);
+    FOC_ResetControllers(m);
+    PWM_UpdateDutyABC(m, hw, 0.5f, 0.5f, 0.5f);
+    PWM_EnableOutputs(m, hw, 0U);
 }
 
-static void App_RunStateMachine_1kHz(void)
+static void App_RunStateMachine_1kHz(volatile MotorCtrl_t *m, const MotorHw_t *hw)
 {
     float signRef;
     float speedTargetRpm;
     float speedRampStep;
     float iqRampStep;
 
-    EQEP2_UpdateSpeed_1kHz();
+    EQEP_UpdateSpeed_1kHz(m, hw);
+    m->Timer0IsrCount++;
 
-    if(gAppState == APP_STATE_FAULT)
+    if(m->AppState == APP_STATE_FAULT)
     {
-        PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
-        PWM_EnableOutputs(0U);
-        FOC_ResetControllers();
-        gStartCmdPrev = gStartCmd;
+        PWM_UpdateDutyABC(m, hw, 0.5f, 0.5f, 0.5f);
+        PWM_EnableOutputs(m, hw, 0U);
+        FOC_ResetControllers(m);
+        m->StartCmdPrev = m->StartCmd;
         return;
     }
 
-    if((gStartCmd != 0U) && (gStartCmdPrev == 0U))
+    if((m->StartCmd != 0U) && (m->StartCmdPrev == 0U))
     {
-        EQEP2_ResetAlignOffsetAccumulator();
-        EQEP2_ResetEstimator();
-        FOC_ResetControllers();
-        gOverCurrentTrip = 0U;
-        gAlignCounterMs = 0U;
-        gVerifyCounterMs = 0U;
-        gThetaOpenloopRad = ALIGN_ELEC_ANGLE_RAD;
-        gThetaCtrlRad = ALIGN_ELEC_ANGLE_RAD;
-        gSpeedCmdRpmRamp = 0.0f;
-        gTractionDriveEnable = 0U;
-        gOmegaMechCmdRad_s = 0.0f;
-        gOmegaElecCmdRad_s = 0.0f;
-        PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
-        PWM_EnableOutputs(1U);
-        gAppState = APP_STATE_ALIGN;
+        EQEP_ResetAlignOffsetAccumulator(m);
+        EQEP_ResetEstimator(m, hw);
+        FOC_ResetControllers(m);
+        m->OverCurrentTrip = 0U;
+        m->AlignCounterMs = 0U;
+        m->VerifyCounterMs = 0U;
+        m->ThetaOpenloopRad = ALIGN_ELEC_ANGLE_RAD;
+        m->ThetaCtrlRad = ALIGN_ELEC_ANGLE_RAD;
+        m->SpeedCmdRpmRamp = 0.0f;
+        m->TractionDriveEnable = 0U;
+        m->OmegaMechCmdRad_s = 0.0f;
+        m->OmegaElecCmdRad_s = 0.0f;
+        PWM_UpdateDutyABC(m, hw, 0.5f, 0.5f, 0.5f);
+        PWM_EnableOutputs(m, hw, 1U);
+        m->AppState = APP_STATE_ALIGN;
     }
 
-    if(gStartCmd == 0U)
+    if(m->StartCmd == 0U)
     {
-        if(gAppState != APP_STATE_STOP)
+        if(m->AppState != APP_STATE_STOP)
         {
-            App_ForceStop();
+            App_ForceStop(m, hw);
         }
-        gStartCmdPrev = gStartCmd;
+        m->StartCmdPrev = m->StartCmd;
         return;
     }
 
-    signRef = (gDirectionCmd >= 0) ? 1.0f : -1.0f;
-    speedTargetRpm = signRef * fabsf(gSpeedRefRpmCmd);
+    signRef = (m->DirectionCmd >= 0) ? 1.0f : -1.0f;
+    speedTargetRpm = signRef * fabsf(m->SpeedRefRpmCmd);
     speedRampStep = CLOSEDLOOP_SPEED_RAMP_RPM_PER_S * TIMER0_TS;
     iqRampStep = IQ_REF_SLEW_A_PER_S * TIMER0_TS;
 
-    switch(gAppState)
+    switch(m->AppState)
     {
         case APP_STATE_STOP:
             break;
 
         case APP_STATE_ALIGN:
-            gAlignCounterMs++;
-            EQEP2_RunAlignOffsetAccumulator_1kHz();
-            gSpeedCmdRpmRamp = 0.0f;
-            gOmegaMechCmdRad_s = 0.0f;
-            gOmegaElecCmdRad_s = 0.0f;
-            gIdRefCmd_A = OPENLOOP_ID_A;
-            gIqRefTarget_A = 0.0f;
-            gIqRefCmd_A = RampToTarget(gIqRefCmd_A, gIqRefTarget_A, iqRampStep);
+            m->AlignCounterMs++;
+            EQEP_RunAlignOffsetAccumulator_1kHz(m, hw);
 
-            if(gAlignCounterMs >= ALIGN_TIME_MS)
+            m->SpeedCmdRpmRamp = 0.0f;
+            m->OmegaMechCmdRad_s = 0.0f;
+            m->OmegaElecCmdRad_s = 0.0f;
+            m->IdRefCmd_A = OPENLOOP_ID_A;
+            m->IqRefTarget_A = 0.0f;
+            m->IqRefCmd_A = RampToTarget(m->IqRefCmd_A, m->IqRefTarget_A, iqRampStep);
+
+            if(m->AlignCounterMs >= ALIGN_TIME_MS)
             {
-                EQEP2_CaptureElecOffsetFromAlign();
-                EQEP2_ResetEstimator();
+                EQEP_CaptureElecOffsetFromAlign(m, hw);
+                EQEP_ResetEstimator(m, hw);
 
-                gThetaCtrlRad = gThetaElecEncRad;
-                gSpeedCmdRpmRamp = 0.0f;
-                gOmegaMechCmdRad_s = 0.0f;
-                gOmegaElecCmdRad_s = 0.0f;
-                gIdRefCmd_A = OPENLOOP_ID_A;
-                gIqRefCmd_A = 0.0f;
-                gIqRefTarget_A = 0.0f;
-                gSpeedPI.Ui = 0.0f;
-                gTractionDriveEnable = 0U;
-                gAppState = APP_STATE_CLOSEDLOOP;
+                m->ThetaCtrlRad = m->ThetaElecEncRad;
+                m->SpeedCmdRpmRamp = 0.0f;
+                m->OmegaMechCmdRad_s = 0.0f;
+                m->OmegaElecCmdRad_s = 0.0f;
+                m->IdRefCmd_A = OPENLOOP_ID_A;
+                m->IqRefCmd_A = 0.0f;
+                m->IqRefTarget_A = 0.0f;
+                m->SpeedPI.Ui = 0.0f;
+                m->TractionDriveEnable = 0U;
+
+                if(VERIFY_TIME_MS > 0U)
+                {
+                    m->AppState = APP_STATE_VERIFY;
+                }
+                else
+                {
+                    m->AppState = APP_STATE_CLOSEDLOOP;
+                }
             }
             break;
 
         case APP_STATE_VERIFY:
-            gVerifyCounterMs++;
-            gSpeedCmdRpmRamp = 0.0f;
-            gOmegaMechCmdRad_s = 0.0f;
-            gOmegaElecCmdRad_s = 0.0f;
-            gIdRefCmd_A = OPENLOOP_ID_A;
-            gIqRefTarget_A = signRef * VERIFY_IQ_A;
-            gIqRefCmd_A = RampToTarget(gIqRefCmd_A, gIqRefTarget_A, iqRampStep);
+            m->VerifyCounterMs++;
+            m->SpeedCmdRpmRamp = 0.0f;
+            m->OmegaMechCmdRad_s = 0.0f;
+            m->OmegaElecCmdRad_s = 0.0f;
+            m->IdRefCmd_A = OPENLOOP_ID_A;
+            m->IqRefTarget_A = signRef * VERIFY_IQ_A;
+            m->IqRefCmd_A = RampToTarget(m->IqRefCmd_A, m->IqRefTarget_A, iqRampStep);
 
-            if(gVerifyCounterMs >= VERIFY_TIME_MS)
+            if(m->VerifyCounterMs >= VERIFY_TIME_MS)
             {
-                gSpeedCmdRpmRamp = 0.0f;
-                gOmegaMechCmdRad_s = 0.0f;
-                gOmegaElecCmdRad_s = 0.0f;
-                gIdRefCmd_A = OPENLOOP_ID_A;
-                gIqRefCmd_A = 0.0f;
-                gIqRefTarget_A = 0.0f;
-                gSpeedPI.Ui = 0.0f;
-                gTractionDriveEnable = 0U;
-                gAppState = APP_STATE_CLOSEDLOOP;
+                m->SpeedCmdRpmRamp = 0.0f;
+                m->OmegaMechCmdRad_s = 0.0f;
+                m->OmegaElecCmdRad_s = 0.0f;
+                m->IdRefCmd_A = OPENLOOP_ID_A;
+                m->IqRefCmd_A = 0.0f;
+                m->IqRefTarget_A = 0.0f;
+                m->SpeedPI.Ui = 0.0f;
+                m->TractionDriveEnable = 0U;
+                m->AppState = APP_STATE_CLOSEDLOOP;
             }
             break;
 
@@ -1394,83 +1715,83 @@ static void App_RunStateMachine_1kHz(void)
             float speedErr;
             float iqCmd;
 
-            gSpeedCmdRpmRamp = RampToTarget(gSpeedCmdRpmRamp, speedTargetRpm, speedRampStep);
-            gOmegaMechCmdRad_s = gSpeedCmdRpmRamp * (TWO_PI_F / 60.0f);
-            gOmegaElecCmdRad_s = gOmegaMechCmdRad_s * MOTOR_POLE_PAIRS;
-            gIdRefCmd_A = OPENLOOP_ID_A;
+            m->SpeedCmdRpmRamp = RampToTarget(m->SpeedCmdRpmRamp, speedTargetRpm, speedRampStep);
+            m->OmegaMechCmdRad_s = m->SpeedCmdRpmRamp * (TWO_PI_F / 60.0f);
+            m->OmegaElecCmdRad_s = m->OmegaMechCmdRad_s * MOTOR_POLE_PAIRS;
+            m->IdRefCmd_A = OPENLOOP_ID_A;
 
-            if(fabsf(gSpeedCmdRpmRamp) < 1.0f)
+            if(fabsf(m->SpeedCmdRpmRamp) < 1.0f)
             {
-                gTractionDriveEnable = 0U;
-                gSpeedPI.Ui = 0.0f;
-                gIqRefTarget_A = 0.0f;
+                m->TractionDriveEnable = 0U;
+                m->SpeedPI.Ui = 0.0f;
+                m->IqRefTarget_A = 0.0f;
             }
-            else if(gDirectionCmd >= 0)
+            else if(m->DirectionCmd >= 0)
             {
-                speedErr = gSpeedCmdRpmRamp - gSpeedMechFbRpmFilt;
+                speedErr = m->SpeedCmdRpmRamp - m->SpeedMechFbRpmFilt;
 
                 if(speedErr >= TRACTION_SPEED_ENTER_BAND_RPM)
                 {
-                    gTractionDriveEnable = 1U;
+                    m->TractionDriveEnable = 1U;
                 }
                 else if(speedErr <= -TRACTION_SPEED_ENTER_BAND_RPM)
                 {
-                    gTractionDriveEnable = 0U;
-                    gSpeedPI.Ui = 0.0f;
+                    m->TractionDriveEnable = 0U;
+                    m->SpeedPI.Ui = 0.0f;
                 }
 
-                if(gTractionDriveEnable)
+                if(m->TractionDriveEnable)
                 {
-                    iqCmd = PI_Run(&gSpeedPI, gSpeedCmdRpmRamp, gSpeedMechFbRpmFilt, TIMER0_TS);
+                    iqCmd = PI_Run(&m->SpeedPI, m->SpeedCmdRpmRamp, m->SpeedMechFbRpmFilt, TIMER0_TS);
                     iqCmd = ClampF(iqCmd, 0.0f, SPEED_PI_OUT_MAX_A);
 
-                    if((gSpeedCmdRpmRamp > 20.0f) && (speedErr > TRACTION_SPEED_EXIT_BAND_RPM) &&
+                    if((m->SpeedCmdRpmRamp > 20.0f) && (speedErr > TRACTION_SPEED_EXIT_BAND_RPM) &&
                        (iqCmd < TRACTION_MIN_RUN_IQ_A))
                     {
                         iqCmd = TRACTION_MIN_RUN_IQ_A;
                     }
 
-                    gIqRefTarget_A = iqCmd;
+                    m->IqRefTarget_A = iqCmd;
                 }
                 else
                 {
-                    gIqRefTarget_A = 0.0f;
+                    m->IqRefTarget_A = 0.0f;
                 }
             }
             else
             {
-                speedErr = gSpeedCmdRpmRamp - gSpeedMechFbRpmFilt;
+                speedErr = m->SpeedCmdRpmRamp - m->SpeedMechFbRpmFilt;
 
                 if(speedErr <= -TRACTION_SPEED_ENTER_BAND_RPM)
                 {
-                    gTractionDriveEnable = 1U;
+                    m->TractionDriveEnable = 1U;
                 }
                 else if(speedErr >= TRACTION_SPEED_ENTER_BAND_RPM)
                 {
-                    gTractionDriveEnable = 0U;
-                    gSpeedPI.Ui = 0.0f;
+                    m->TractionDriveEnable = 0U;
+                    m->SpeedPI.Ui = 0.0f;
                 }
 
-                if(gTractionDriveEnable)
+                if(m->TractionDriveEnable)
                 {
-                    iqCmd = PI_Run(&gSpeedPI, gSpeedCmdRpmRamp, gSpeedMechFbRpmFilt, TIMER0_TS);
+                    iqCmd = PI_Run(&m->SpeedPI, m->SpeedCmdRpmRamp, m->SpeedMechFbRpmFilt, TIMER0_TS);
                     iqCmd = ClampF(iqCmd, -SPEED_PI_OUT_MAX_A, 0.0f);
 
-                    if((gSpeedCmdRpmRamp < -20.0f) && (speedErr < -TRACTION_SPEED_EXIT_BAND_RPM) &&
+                    if((m->SpeedCmdRpmRamp < -20.0f) && (speedErr < -TRACTION_SPEED_EXIT_BAND_RPM) &&
                        (iqCmd > -TRACTION_MIN_RUN_IQ_A))
                     {
                         iqCmd = -TRACTION_MIN_RUN_IQ_A;
                     }
 
-                    gIqRefTarget_A = iqCmd;
+                    m->IqRefTarget_A = iqCmd;
                 }
                 else
                 {
-                    gIqRefTarget_A = 0.0f;
+                    m->IqRefTarget_A = 0.0f;
                 }
             }
 
-            gIqRefCmd_A = RampToTarget(gIqRefCmd_A, gIqRefTarget_A, iqRampStep);
+            m->IqRefCmd_A = RampToTarget(m->IqRefCmd_A, m->IqRefTarget_A, iqRampStep);
             break;
         }
 
@@ -1479,71 +1800,124 @@ static void App_RunStateMachine_1kHz(void)
             break;
     }
 
-    gStartCmdPrev = gStartCmd;
+    m->StartCmdPrev = m->StartCmd;
 }
 
-static inline void UpdateDebugSnapshot(void)
+
+static void ElectronicDiff_UpdateRefs_1kHz(void)
 {
-    gDbg.CsaGain_VV = gCsaGain_VV;
-    gDbg.PwmEnabled = gPwmEnabled;
-    gDbg.AppState = (Uint16)gAppState;
-    gDbg.StartCmd = gStartCmd;
-    gDbg.DirectionCmd = gDirectionCmd;
+    if(gEdEnable == 0U)
+    {
+        return;
+    }
 
-    gDbg.IA_A = gIA_A;
-    gDbg.IB_A = gIB_A;
-    gDbg.IC_A = gIC_A;
-    gDbg.Vbus_V = gVBS_bus_V;
+    gEdDbg.vCmd_mps = ClampF(gVehicleSpeedCmd_mps, -ED_VEHICLE_MAX_SPEED_MPS, ED_VEHICLE_MAX_SPEED_MPS);
+    gEdDbg.deltaDeg = ClampF(gSteerAngleCmd_deg, -ED_STEER_LIMIT_DEG, ED_STEER_LIMIT_DEG);
+    gEdDbg.deltaRad = gEdDbg.deltaDeg * (PI_F / 180.0f);
+    gEdDbg.absDeltaRad = fabsf(gEdDbg.deltaRad);
+    gEdDbg.absV_mps = fabsf(gEdDbg.vCmd_mps);
+    gEdDbg.speedSign = (gEdDbg.vCmd_mps >= 0.0f) ? 1.0f : -1.0f;
+    gEdDbg.turnRadius_m = 0.0f;
+    gEdDbg.vInner_mps = 0.0f;
+    gEdDbg.vOuter_mps = 0.0f;
+    gEdDbg.vLeft_mps = 0.0f;
+    gEdDbg.vRight_mps = 0.0f;
+    gEdDbg.wLeftWheel_rpm = 0.0f;
+    gEdDbg.wRightWheel_rpm = 0.0f;
+    gEdDbg.mLeft_rpm = 0.0f;
+    gEdDbg.mRight_rpm = 0.0f;
+    gEdDbg.m1Ref_rpm = 0.0f;
+    gEdDbg.m2Ref_rpm = 0.0f;
 
-    gDbg.IA_A_Filt = gIA_A_filt;
-    gDbg.IB_A_Filt = gIB_A_filt;
-    gDbg.Vbus_V_Filt = gVBS_bus_V_filt;
+    gSteerAngleCmd_rad = gEdDbg.deltaRad;
 
-    gDbg.SpeedRefRpmCmd = gSpeedRefRpmCmd;
-    gDbg.SpeedCmdRpmRamp = gSpeedCmdRpmRamp;
-    gDbg.SpeedFbRpm = gSpeedMechFbRpm;
-    gDbg.SpeedFbRpmFilt = gSpeedMechFbRpmFilt;
-    gDbg.OmegaMechCmdRad_s = gOmegaMechCmdRad_s;
-    gDbg.OmegaElecCmdRad_s = gOmegaElecCmdRad_s;
-    gDbg.OmegaMechFbRad_s = gOmegaMechFbRad_s;
-    gDbg.OmegaElecFbRad_s = gOmegaElecFbRad_s;
+    if(gEdDbg.absV_mps < 1.0e-6f)
+    {
+        gEdYawRateRef_rad_s = 0.0f;
+    }
+    else if(gEdDbg.absDeltaRad < 1.0e-6f)
+    {
+        gEdDbg.vInner_mps = gEdDbg.absV_mps;
+        gEdDbg.vOuter_mps = gEdDbg.absV_mps;
+        gEdDbg.vLeft_mps = gEdDbg.vCmd_mps;
+        gEdDbg.vRight_mps = gEdDbg.vCmd_mps;
+        gEdYawRateRef_rad_s = 0.0f;
+    }
+    else
+    {
+        gEdDbg.turnRadius_m = ED_WHEELBASE_M / tanf(gEdDbg.absDeltaRad);
 
-    gDbg.ThetaCtrlRad = gThetaCtrlRad;
-    gDbg.ThetaMechEncRad = gThetaMechEncRad;
-    gDbg.ThetaElecEncRad = gThetaElecEncRad;
-    gDbg.ThetaElecOffsetRad = gThetaElecOffsetRad;
+        if(gEdDbg.turnRadius_m < (ED_TRACK_WIDTH_M * 0.5f))
+        {
+            gEdDbg.turnRadius_m = ED_TRACK_WIDTH_M * 0.5f;
+        }
 
-    gDbg.IdRef_A = gIdRefCmd_A;
-    gDbg.IqRefTarget_A = gIqRefTarget_A;
-    gDbg.IqRefCmd_A = gIqRefCmd_A;
+        gEdDbg.vInner_mps = gEdDbg.absV_mps * ((gEdDbg.turnRadius_m - (ED_TRACK_WIDTH_M * 0.5f)) / gEdDbg.turnRadius_m);
+        gEdDbg.vOuter_mps = gEdDbg.absV_mps * ((gEdDbg.turnRadius_m + (ED_TRACK_WIDTH_M * 0.5f)) / gEdDbg.turnRadius_m);
 
-    gDbg.Id_A = gId_A;
-    gDbg.Iq_A = gIq_A;
+        if(gEdDbg.deltaRad > 0.0f)
+        {
+            gEdDbg.vLeft_mps = gEdDbg.speedSign * gEdDbg.vInner_mps;
+            gEdDbg.vRight_mps = gEdDbg.speedSign * gEdDbg.vOuter_mps;
+            gEdYawRateRef_rad_s = gEdDbg.vCmd_mps / gEdDbg.turnRadius_m;
+        }
+        else
+        {
+            gEdDbg.vLeft_mps = gEdDbg.speedSign * gEdDbg.vOuter_mps;
+            gEdDbg.vRight_mps = gEdDbg.speedSign * gEdDbg.vInner_mps;
+            gEdYawRateRef_rad_s = -gEdDbg.vCmd_mps / gEdDbg.turnRadius_m;
+        }
+    }
 
-    gDbg.VdCmd_V = gVdCmd_V;
-    gDbg.VqCmd_V = gVqCmd_V;
+    gEdTurnRadius_m = gEdDbg.turnRadius_m;
+    gEdRearLeftLinRef_mps = gEdDbg.vLeft_mps;
+    gEdRearRightLinRef_mps = gEdDbg.vRight_mps;
 
-    gDbg.DutyA = gDutyA;
-    gDbg.DutyB = gDutyB;
-    gDbg.DutyC = gDutyC;
+    gEdDbg.denom = TWO_PI_F * ED_WHEEL_RADIUS_M;
+    gEdDbg.wLeftWheel_rpm  = (fabsf(gEdDbg.vLeft_mps)  / gEdDbg.denom) * 60.0f;
+    gEdDbg.wRightWheel_rpm = (fabsf(gEdDbg.vRight_mps) / gEdDbg.denom) * 60.0f;
 
-    gDbg.FaultActive = gFaultActive;
-    gDbg.OctwActive = gOctwActive;
-    gDbg.QepIndexSeen = gQepIndexSeen;
-    gDbg.QepCount = gQepCount;
-    gDbg.QepDeltaCount = gQepDeltaCount;
-    gDbg.AlignCounterMs = gAlignCounterMs;
-    gDbg.Timer0IsrCount = gTimer0IsrCount;
-    gDbg.AdcIsrCount = gAdcIsrCount;
+    gEdDbg.mLeft_rpm  = gEdDbg.wLeftWheel_rpm  * ED_GEAR_RATIO;
+    gEdDbg.mRight_rpm = gEdDbg.wRightWheel_rpm * ED_GEAR_RATIO;
 
-    gDbg.seq++;
+    if(gEdDbg.vLeft_mps < 0.0f)  gEdDbg.mLeft_rpm  = -gEdDbg.mLeft_rpm;
+    if(gEdDbg.vRight_mps < 0.0f) gEdDbg.mRight_rpm = -gEdDbg.mRight_rpm;
+
+    gEdRearLeftWheelRef_rpm  = (gEdDbg.vLeft_mps  >= 0.0f) ? gEdDbg.wLeftWheel_rpm  : -gEdDbg.wLeftWheel_rpm;
+    gEdRearRightWheelRef_rpm = (gEdDbg.vRight_mps >= 0.0f) ? gEdDbg.wRightWheel_rpm : -gEdDbg.wRightWheel_rpm;
+    gEdRearLeftMotorRef_rpm  = gEdDbg.mLeft_rpm;
+    gEdRearRightMotorRef_rpm = gEdDbg.mRight_rpm;
+
+#if ED_MOTOR1_IS_REAR_LEFT
+    gEdDbg.m1Ref_rpm = gEdDbg.mLeft_rpm;
+    gEdDbg.m2Ref_rpm = gEdDbg.mRight_rpm;
+#else
+    gEdDbg.m1Ref_rpm = gEdDbg.mRight_rpm;
+    gEdDbg.m2Ref_rpm = gEdDbg.mLeft_rpm;
+#endif
+
+    gEdDbg.m1Ref_rpm = ClampF(gEdDbg.m1Ref_rpm, -ED_MOTOR_RPM_LIMIT, ED_MOTOR_RPM_LIMIT);
+    gEdDbg.m2Ref_rpm = ClampF(gEdDbg.m2Ref_rpm, -ED_MOTOR_RPM_LIMIT, ED_MOTOR_RPM_LIMIT);
+
+    gEdMotor1Ref_rpm = gEdDbg.m1Ref_rpm;
+    gEdMotor2Ref_rpm = gEdDbg.m2Ref_rpm;
+
+    gM1.StartCmd = gEdStartCmd;
+    gM2.StartCmd = gEdStartCmd;
+
+    gM1.DirectionCmd = (gEdDbg.m1Ref_rpm >= 0.0f) ? 1 : -1;
+    gM2.DirectionCmd = (gEdDbg.m2Ref_rpm >= 0.0f) ? 1 : -1;
+
+    gM1.SpeedRefRpmCmd = fabsf(gEdDbg.m1Ref_rpm);
+    gM2.SpeedRefRpmCmd = fabsf(gEdDbg.m2Ref_rpm);
 }
 
 // ===================== 1 kHz Timer ISR =====================
 interrupt void cpu_timer0_isr(void)
 {
-    gTimer0IsrCount++;
-    App_RunStateMachine_1kHz();
+    ElectronicDiff_UpdateRefs_1kHz();
+    App_RunStateMachine_1kHz(&gM1, &gM1Hw);
+    App_RunStateMachine_1kHz(&gM2, &gM2Hw);
 
     CpuTimer0Regs.TCR.bit.TIF = 1U;
     PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
@@ -1552,80 +1926,147 @@ interrupt void cpu_timer0_isr(void)
 // ===================== ADC ISR =====================
 interrupt void adca1_isr(void)
 {
-    gIA_raw  = AdccResultRegs.ADCRESULT0;
-    gIB_raw  = AdcbResultRegs.ADCRESULT0;
-    gVBS_raw = AdcaResultRegs.ADCRESULT1;
+    gM1.IA_raw  = AdccResultRegs.ADCRESULT0;
+    gM1.IB_raw  = AdcbResultRegs.ADCRESULT0;
+    gM1.VBS_raw = AdcaResultRegs.ADCRESULT1;
 
-    gAdcIsrCount++;
+    gM2.IA_raw  = AdccResultRegs.ADCRESULT1;
+    gM2.IB_raw  = AdcbResultRegs.ADCRESULT1;
+    gM2.VBS_raw = AdcaResultRegs.ADCRESULT2;
 
-    if(gCalActive)
+    gM1.AdcIsrCount++;
+    gM2.AdcIsrCount++;
+
+    if(gM1.CalActive)
     {
-        gIA_sum += gIA_raw;
-        gIB_sum += gIB_raw;
-        gCalCount++;
+        gM1.IA_sum += gM1.IA_raw;
+        gM1.IB_sum += gM1.IB_raw;
+        gM1.CalCount++;
 
-        if(gCalCount >= CURR_OFFSET_SAMPLES)
+        if(gM1.CalCount >= CURR_OFFSET_SAMPLES)
         {
-            gCalActive = 0U;
-            gCalDone = 1U;
+            gM1.CalActive = 0U;
+            gM1.CalDone = 1U;
         }
     }
 
-    ConvertRawToPhysical();
-    UpdateFiltersAndAlarms_ISR();
-    DRV8301_ReadStatusPins();
-
-    if((gFaultActive != 0U) ||
-       (fabsf(gIA_A) > FOC_OC_LIMIT_A) ||
-       (fabsf(gIB_A) > FOC_OC_LIMIT_A))
+    if(gM2.CalActive)
     {
-        gOverCurrentTrip = ((fabsf(gIA_A) > FOC_OC_LIMIT_A) ||
-                            (fabsf(gIB_A) > FOC_OC_LIMIT_A)) ? 1U : 0U;
+        gM2.IA_sum += gM2.IA_raw;
+        gM2.IB_sum += gM2.IB_raw;
+        gM2.CalCount++;
 
-        gAppState = APP_STATE_FAULT;
-        PWM_EnableOutputs(0U);
-        PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
-        FOC_ResetControllers();
+        if(gM2.CalCount >= CURR_OFFSET_SAMPLES)
+        {
+            gM2.CalActive = 0U;
+            gM2.CalDone = 1U;
+        }
+    }
+
+    ConvertRawToPhysical(&gM1);
+    ConvertRawToPhysical(&gM2);
+
+    UpdateFiltersAndAlarms_ISR(&gM1);
+    UpdateFiltersAndAlarms_ISR(&gM2);
+
+    DRV8301_ReadStatusPins(&gM1, &gM1Hw);
+    DRV8301_ReadStatusPins(&gM2, &gM2Hw);
+
+    if((gM1.FaultActive != 0U) ||
+       (fabsf(gM1.IA_A) > FOC_OC_LIMIT_A) ||
+       (fabsf(gM1.IB_A) > FOC_OC_LIMIT_A))
+    {
+        gM1.OverCurrentTrip = ((fabsf(gM1.IA_A) > FOC_OC_LIMIT_A) ||
+                               (fabsf(gM1.IB_A) > FOC_OC_LIMIT_A)) ? 1U : 0U;
+
+        gM1.AppState = APP_STATE_FAULT;
+        PWM_EnableOutputs(&gM1, &gM1Hw, 0U);
+        PWM_UpdateDutyABC(&gM1, &gM1Hw, 0.5f, 0.5f, 0.5f);
+        FOC_ResetControllers(&gM1);
     }
     else
     {
-        switch(gAppState)
+        switch(gM1.AppState)
         {
             case APP_STATE_STOP:
-                PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
+                PWM_UpdateDutyABC(&gM1, &gM1Hw, 0.5f, 0.5f, 0.5f);
                 break;
 
             case APP_STATE_ALIGN:
-                gThetaCtrlRad = ALIGN_ELEC_ANGLE_RAD;
-                Align_ApplyVoltageVector(ALIGN_ELEC_ANGLE_RAD, ALIGN_MOD_INDEX, gVBS_bus_V);
+                gM1.ThetaCtrlRad = ALIGN_ELEC_ANGLE_RAD;
+                Align_ApplyVoltageVector(&gM1, &gM1Hw, ALIGN_ELEC_ANGLE_RAD, ALIGN_MOD_INDEX, gM1.VBS_bus_V);
                 break;
 
             case APP_STATE_VERIFY:
-                EQEP2_UpdatePositionFromCount();
-                gThetaCtrlRad = gThetaElecEncRad;
-                FOC_RunCurrentLoop_ISR();
+                EQEP_UpdatePositionFromCount(&gM1, &gM1Hw);
+                gM1.ThetaCtrlRad = gM1.ThetaElecEncRad;
+                FOC_RunCurrentLoop_ISR(&gM1, &gM1Hw);
                 break;
 
             case APP_STATE_CLOSEDLOOP:
-                EQEP2_UpdatePositionFromCount();
-                gThetaCtrlRad = gThetaElecEncRad;
-                FOC_RunCurrentLoop_ISR();
+                EQEP_UpdatePositionFromCount(&gM1, &gM1Hw);
+                gM1.ThetaCtrlRad = gM1.ThetaElecEncRad;
+                FOC_RunCurrentLoop_ISR(&gM1, &gM1Hw);
                 break;
 
             case APP_STATE_FAULT:
             default:
-                PWM_UpdateDutyABC(0.5f, 0.5f, 0.5f);
-                PWM_EnableOutputs(0U);
+                PWM_UpdateDutyABC(&gM1, &gM1Hw, 0.5f, 0.5f, 0.5f);
+                PWM_EnableOutputs(&gM1, &gM1Hw, 0U);
                 break;
         }
     }
 
-    if((gAdcIsrCount % 2000U) == 0U)
+    if((gM2.FaultActive != 0U) ||
+       (fabsf(gM2.IA_A) > FOC_OC_LIMIT_A) ||
+       (fabsf(gM2.IB_A) > FOC_OC_LIMIT_A))
     {
-        gSpiServiceReq = 1U;
+        gM2.OverCurrentTrip = ((fabsf(gM2.IA_A) > FOC_OC_LIMIT_A) ||
+                               (fabsf(gM2.IB_A) > FOC_OC_LIMIT_A)) ? 1U : 0U;
+
+        gM2.AppState = APP_STATE_FAULT;
+        PWM_EnableOutputs(&gM2, &gM2Hw, 0U);
+        PWM_UpdateDutyABC(&gM2, &gM2Hw, 0.5f, 0.5f, 0.5f);
+        FOC_ResetControllers(&gM2);
+    }
+    else
+    {
+        switch(gM2.AppState)
+        {
+            case APP_STATE_STOP:
+                PWM_UpdateDutyABC(&gM2, &gM2Hw, 0.5f, 0.5f, 0.5f);
+                break;
+
+            case APP_STATE_ALIGN:
+                gM2.ThetaCtrlRad = ALIGN_ELEC_ANGLE_RAD;
+                Align_ApplyVoltageVector(&gM2, &gM2Hw, ALIGN_ELEC_ANGLE_RAD, ALIGN_MOD_INDEX, gM2.VBS_bus_V);
+                break;
+
+            case APP_STATE_VERIFY:
+                EQEP_UpdatePositionFromCount(&gM2, &gM2Hw);
+                gM2.ThetaCtrlRad = gM2.ThetaElecEncRad;
+                FOC_RunCurrentLoop_ISR(&gM2, &gM2Hw);
+                break;
+
+            case APP_STATE_CLOSEDLOOP:
+                EQEP_UpdatePositionFromCount(&gM2, &gM2Hw);
+                gM2.ThetaCtrlRad = gM2.ThetaElecEncRad;
+                FOC_RunCurrentLoop_ISR(&gM2, &gM2Hw);
+                break;
+
+            case APP_STATE_FAULT:
+            default:
+                PWM_UpdateDutyABC(&gM2, &gM2Hw, 0.5f, 0.5f, 0.5f);
+                PWM_EnableOutputs(&gM2, &gM2Hw, 0U);
+                break;
+        }
     }
 
-    UpdateDebugSnapshot();
+    if((gM1.AdcIsrCount % 2000U) == 0U)
+    {
+        gM1.SpiServiceReq = 1U;
+        gM2.SpiServiceReq = 1U;
+    }
 
     AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1U;
 
